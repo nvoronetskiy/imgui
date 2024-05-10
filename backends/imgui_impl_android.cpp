@@ -280,30 +280,6 @@ void ImGui_ImplAndroid_Shutdown()
     io.BackendPlatformName = nullptr;
 }
 
-ImVec2 dpi_scale_factor{1.0f, 1.0f};
-
-void ImGui_ImplAndroid_NewFrame()
-{
-    ImGuiIO& io = ImGui::GetIO();
-
-    // Setup display size (every frame to accommodate for window resizing)
-    int32_t window_width = 720;
-    int32_t window_height = 1280;
-    int display_width = window_width;
-    int display_height = window_height;
-
-    io.DisplaySize = ImVec2(window_width, window_height) ;
-    if (window_width > 0 && window_height > 0)
-        io.DisplayFramebufferScale = ImVec2((float)display_width / window_width, (float)display_height / window_height);
-
-    // Setup time step
-    struct timespec current_timespec;
-    clock_gettime(CLOCK_MONOTONIC, &current_timespec);
-    double current_time = (double)(current_timespec.tv_sec) + (current_timespec.tv_nsec / 1000000000.0);
-    io.DeltaTime = g_Time > 0.0 ? (float)(current_time - g_Time) : (float)(1.0f / 60.0f);
-    g_Time = current_time;
-}
-
 //-----------------------------------------------------------------------------
 
 #endif // #ifndef IMGUI_DISABLE
