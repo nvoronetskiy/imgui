@@ -3216,7 +3216,6 @@ static const ImGuiCol GWindowDockStyleColors[ImGuiWindowDockStyleCol_COUNT] =
 
 static const ImGuiDataVarInfo GStyleVarInfo[] =
 {
-<<<<<<< HEAD
     { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, Alpha) },                     // ImGuiStyleVar_Alpha
     { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, DisabledAlpha) },             // ImGuiStyleVar_DisabledAlpha
     { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, WindowPadding) },             // ImGuiStyleVar_WindowPadding
@@ -3250,39 +3249,8 @@ static const ImGuiDataVarInfo GStyleVarInfo[] =
     { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, SeparatorTextAlign) },        // ImGuiStyleVar_SeparatorTextAlign
     { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, SeparatorTextPadding) },      // ImGuiStyleVar_SeparatorTextPadding
     { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, DockingSeparatorSize) },      // ImGuiStyleVar_DockingSeparatorSize
-=======
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, Alpha) },                 // ImGuiStyleVar_Alpha
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, DisabledAlpha) },         // ImGuiStyleVar_DisabledAlpha
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, WindowPadding) },         // ImGuiStyleVar_WindowPadding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, WindowRounding) },        // ImGuiStyleVar_WindowRounding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, WindowBorderSize) },      // ImGuiStyleVar_WindowBorderSize
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, WindowMinSize) },         // ImGuiStyleVar_WindowMinSize
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, WindowTitleAlign) },      // ImGuiStyleVar_WindowTitleAlign
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, ChildRounding) },         // ImGuiStyleVar_ChildRounding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, ChildBorderSize) },       // ImGuiStyleVar_ChildBorderSize
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, PopupRounding) },         // ImGuiStyleVar_PopupRounding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, PopupBorderSize) },       // ImGuiStyleVar_PopupBorderSize
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, FramePadding) },          // ImGuiStyleVar_FramePadding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, FrameRounding) },         // ImGuiStyleVar_FrameRounding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, FrameBorderSize) },       // ImGuiStyleVar_FrameBorderSize
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, ItemSpacing) },           // ImGuiStyleVar_ItemSpacing
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, ItemInnerSpacing) },      // ImGuiStyleVar_ItemInnerSpacing
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, IndentSpacing) },         // ImGuiStyleVar_IndentSpacing
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, CellPadding) },           // ImGuiStyleVar_CellPadding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, ScrollbarSize) },         // ImGuiStyleVar_ScrollbarSize
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, ScrollbarRounding) },     // ImGuiStyleVar_ScrollbarRounding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, GrabMinSize) },           // ImGuiStyleVar_GrabMinSize
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, GrabRounding) },          // ImGuiStyleVar_GrabRounding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, TabRounding) },           // ImGuiStyleVar_TabRounding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, TabBarBorderSize) },      // ImGuiStyleVar_TabBarBorderSize
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, ButtonTextAlign) },       // ImGuiStyleVar_ButtonTextAlign
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, SelectableTextAlign) },   // ImGuiStyleVar_SelectableTextAlign
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, SeparatorTextBorderSize) },// ImGuiStyleVar_SeparatorTextBorderSize
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, SeparatorTextAlign) },    // ImGuiStyleVar_SeparatorTextAlign
-    { ImGuiDataType_Float, 2, (ImU32)offsetof(ImGuiStyle, SeparatorTextPadding) },  // ImGuiStyleVar_SeparatorTextPadding
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, DockingSeparatorSize) },  // ImGuiStyleVar_DockingSeparatorSize
-    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, LayoutAlign) },           // ImGuiStyleVar_LayoutAlign
->>>>>>> docking-layout
+    { ImGuiDataType_Float, 1, (ImU32)offsetof(ImGuiStyle, LayoutAlign) },               // ImGuiStyleVar_LayoutAlign
+
 };
 
 const ImGuiDataVarInfo* ImGui::GetStyleVarInfo(ImGuiStyleVar idx)
