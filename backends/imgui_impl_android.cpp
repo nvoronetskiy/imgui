@@ -287,12 +287,12 @@ void ImGui_ImplAndroid_NewFrame()
     ImGuiIO& io = ImGui::GetIO();
 
     // Setup display size (every frame to accommodate for window resizing)
-    int32_t window_width = ANativeWindow_getWidth(g_Window);
-    int32_t window_height = ANativeWindow_getHeight(g_Window);
+    int32_t window_width = 720;
+    int32_t window_height = 1280;
     int display_width = window_width;
     int display_height = window_height;
 
-    io.DisplaySize = ImVec2(window_width * dpi_scale_factor.x, window_height * dpi_scale_factor.y) ;
+    io.DisplaySize = ImVec2(window_width, window_height) ;
     if (window_width > 0 && window_height > 0)
         io.DisplayFramebufferScale = ImVec2((float)display_width / window_width, (float)display_height / window_height);
 
