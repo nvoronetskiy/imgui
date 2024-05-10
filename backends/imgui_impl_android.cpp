@@ -292,7 +292,7 @@ void ImGui_ImplAndroid_NewFrame()
     int display_width = window_width;
     int display_height = window_height;
 
-    io.DisplaySize = ImVec2(window_width * dpi_scale_factor.y, window_height * dpi_scale_factor.y) ;
+    io.DisplaySize = ImVec2(window_width * dpi_scale_factor.x, window_height * dpi_scale_factor.y) ;
     if (window_width > 0 && window_height > 0)
         io.DisplayFramebufferScale = ImVec2((float)display_width / window_width, (float)display_height / window_height);
 
