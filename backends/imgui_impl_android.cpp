@@ -280,6 +280,8 @@ void ImGui_ImplAndroid_Shutdown()
     io.BackendPlatformName = nullptr;
 }
 
+ImVec2 dpi_scale_factor{1.0f, 1.0f};
+
 void ImGui_ImplAndroid_NewFrame()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -290,7 +292,7 @@ void ImGui_ImplAndroid_NewFrame()
     int display_width = window_width;
     int display_height = window_height;
 
-    io.DisplaySize = ImVec2((float)window_width, (float)window_height);
+    io.DisplaySize = ImVec2((float)window_width, (float)window_height) * dpi_scale_factor;
     if (window_width > 0 && window_height > 0)
         io.DisplayFramebufferScale = ImVec2((float)display_width / window_width, (float)display_height / window_height);
 
