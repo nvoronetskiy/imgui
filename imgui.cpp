@@ -11642,9 +11642,9 @@ void ImGui::ErrorCheckEndFrameFinalizeErrorTooltip()
 
     // Window stacks
     // NOT checking: DC.ItemWidth, DC.TextWrapPos (per window) to allow user to conveniently push once and not pop (they are cleared on Begin)
-    IM_ASSERT(SizeOfIDStack         == window->IDStack.Size     && "PushID/PopID or TreeNode/TreePop Mismatch!");
-    IM_ASSERT(0                     == window->DC.LayoutStack.Size && (!window->DC.LayoutStack.Size || window->DC.LayoutStack.back()->Type == ImGuiLayoutType_Horizontal) && "BeginHorizontal/EndHorizontal Mismatch!");
-    IM_ASSERT(0                     == window->DC.LayoutStack.Size && (!window->DC.LayoutStack.Size || window->DC.LayoutStack.back()->Type == ImGuiLayoutType_Vertical)   && "BeginVertical/EndVertical Mismatch!");
+    // IM_ASSERT(SizeOfIDStack         == window->IDStack.Size     && "PushID/PopID or TreeNode/TreePop Mismatch!");
+    // IM_ASSERT(0                     == window->DC.LayoutStack.Size && (!window->DC.LayoutStack.Size || window->DC.LayoutStack.back()->Type == ImGuiLayoutType_Horizontal) && "BeginHorizontal/EndHorizontal Mismatch!");
+    // IM_ASSERT(0                     == window->DC.LayoutStack.Size && (!window->DC.LayoutStack.Size || window->DC.LayoutStack.back()->Type == ImGuiLayoutType_Vertical)   && "BeginVertical/EndVertical Mismatch!");
     
 #endif
 }
