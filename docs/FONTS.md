@@ -2,7 +2,7 @@ _(You may browse this at https://github.com/ocornut/imgui/blob/master/docs/FONTS
 
 ## Dear ImGui: Using Fonts
 
-The code in imgui.cpp embeds a copy of 'ProggyClean.ttf' (by Tristan Grimmer),
+The code in imgui.cpp embeds a copy of [ProggyClean.ttf](http://proggyfonts.net) (by Tristan Grimmer),
 a 13 pixels high, pixel-perfect font used by default. We embed it in the source code so you can use Dear ImGui without any file system access. ProggyClean does not scale smoothly, therefore it is recommended that you load your own file when using Dear ImGui in an application aiming to look nice and wanting to support multiple resolutions.
 
 You may also load external .TTF/.OTF files.
@@ -18,6 +18,7 @@ In the [misc/fonts/](https://github.com/ocornut/imgui/tree/master/misc/fonts) fo
 - [Loading Font Data from Memory](#loading-font-data-from-memory)
 - [Loading Font Data Embedded In Source Code](#loading-font-data-embedded-in-source-code)
 - [Using Icon Fonts](#using-icon-fonts)
+  - [Excluding Overlapping Ranges](#excluding-overlapping-ranges)
 - [Using FreeType Rasterizer (imgui_freetype)](#using-freetype-rasterizer-imgui_freetype)
 - [Using Colorful Glyphs/Emojis](#using-colorful-glyphsemojis)
 - [Using Custom Glyph Ranges](#using-custom-glyph-ranges)
@@ -36,7 +37,7 @@ In the [misc/fonts/](https://github.com/ocornut/imgui/tree/master/misc/fonts) fo
 
 ### (1) Invalid filename due to use of `\` or unexpected working directory.
 
-See [About Filenames](#about-filenames). AddFontXXX functions should assert if the filename is incorrect.
+See [About Filenames](#about-filenames). AddFontXXX() functions should assert if the filename is incorrect.
 
 ### (2) Invalid UTF-8 encoding of your non-ASCII strings.
 
@@ -44,18 +45,18 @@ See [About UTF-8 Encoding](#about-utf-8-encoding). Use the encoding viewer to co
 
 ### (3) Missing glyph ranges.
 
-🆕 **Since 1.92, with an up to date backend: specifying glyph ranges is necessary.**
+🆕 **Since 1.92, with an up to date backend: specifying glyph ranges is unnecessary.**
 
-You need to load a font with explicit glyph ranges if you want to use non-ASCII characters. See [Fonts Loading Instructions](#fonts-loading-instructions). Use [Debug Tools](#debug-tools) confirm loaded fonts and loaded glyph ranges.
+⏪ Before 1.92: you need to load a font with explicit glyph ranges if you want to use non-ASCII characters. See [Fonts Loading Instructions](#fonts-loading-instructions). Use [Debug Tools](#debug-tools) confirm loaded fonts and loaded glyph ranges.
 
-This is a current constraint of Dear ImGui (which we will lift in the future): when loading a font you need to specify which characters glyphs to load.
+This was a previous  constraint of Dear ImGui (lifted in 1.92): when loading a font you need to specify which characters glyphs to load.
 All loaded fonts glyphs are rendered into a single texture atlas ahead of time. Calling either of `io.Fonts->GetTexDataAsAlpha8()`, `io.Fonts->GetTexDataAsRGBA32()` or `io.Fonts->Build()` will build the atlas. This is generally called by the Renderer backend, e.g. `ImGui_ImplDX11_NewFrame()` calls it. **If you use custom glyphs ranges, make sure the array is persistent** and available during the calls to `GetTexDataAsAlpha8()/GetTexDataAsRGBA32()/Build()`.
 
 ### (4) Font atlas texture fails to upload to GPU.
 
 🆕 **Since 1.92, with an up to date backend: atlas is built incrementally and dynamically resized, this is less likely to happen**
 
-This is often of byproduct of point 3. If you have large number of glyphs or multiple fonts, the texture may become too big for your graphics API. **The typical result of failing to upload a texture is if every glyph or everything appears as empty white rectangles.** Mind the fact that some graphics drivers have texture size limitation. If you are building a PC application, mind the fact that your users may use hardware with lower limitations than yours.
+:rewind: This is often of byproduct of point 3. If you have large number of glyphs or multiple fonts, the texture may become too big for your graphics API. **The typical result of failing to upload a texture is if every glyph or everything appears as empty white rectangles.** Mind the fact that some graphics drivers have texture size limitation. If you are building a PC application, mind the fact that your users may use hardware with lower limitations than yours.
 
 ![empty squares](https://github.com/user-attachments/assets/68b50fb5-8b9d-4c38-baec-6ac384f06d26)
 
@@ -66,8 +67,6 @@ Some solutions:
   You can use the `ImFontGlyphRangesBuilder` for this purpose and rebuilding your atlas between frames when new characters are needed. This will be the biggest win!
 - Set `io.Fonts.Flags |= ImFontAtlasFlags_NoPowerOfTwoHeight;` to disable rounding the texture height to the next power of two.
 
-Future versions of Dear ImGui should solve this problem.
-
 ##### [Return to Index](#index)
 
 ---------------------------------------
@@ -76,7 +75,7 @@ Future versions of Dear ImGui should solve this problem.
 
 v1.92 introduces a newer, dynamic font system. It requires backend to support the `ImGuiBackendFlags_HasTextures` feature:
 - Users of icons, Asian and non-English languages do not need to pre-build all glyphs ahead of time. Saving on loading time, memory, and also reducing issues with missing glyphs. Specifying glyph ranges is not needed anymore.
-- `PushFontSize()` may be used anytime to change font size.
+- `PushFont(NULL, new_size)` may be used anytime to change font size.
 - Packing custom rectangles is more convenient as pixels may be written to immediately.
 - Any update to fonts previously required backend specific calls to re-upload the texture, and said calls were not portable across backends. It is now possible to scale fonts etc. in a way that doesn't require you to make backend-specific calls.
 - It is possible to plug a custom loader/backend to any font source.
@@ -111,7 +110,7 @@ io.Fonts->AddFontDefault();
 ImGuiIO& io = ImGui::GetIO();
 io.Fonts->AddFontFromFileTTF("font.ttf");
 ```
-**Before 1.92, or without an up to date backend:**
+:rewind: **Before 1.92, or without an up to date backend:**
 ```cpp
 ImGuiIO& io = ImGui::GetIO();
 io.Fonts->AddFontFromFileTTF("font.ttf", size_pixels);
@@ -129,7 +128,7 @@ ImFont* font2 = io.Fonts->AddFontFromFileTTF("anotherfont.otf");
 In your application loop, select which font to use:
 ```cpp
 ImGui::Text("Hello"); // use the default font (which is the first loaded font)
-ImGui::PushFont(font2);
+ImGui::PushFont(font2, 0.0f); // change font, keep current size
 ImGui::Text("Hello with another font");
 ImGui::PopFont();
 ```
@@ -153,7 +152,7 @@ io.Fonts->AddFontFromFileTTF("DroidSans.ttf", 0.0f, &config);           // Merge
 io.Fonts->AddFontFromFileTTF("fontawesome-webfont.ttf", 0.0f, &config); // Merge into first font to add Icons
 io.Fonts->Build();
 ```
-**Before 1.92, or without an up to date backend:**
+:rewind: **Before 1.92, or without an up to date backend:**
 ```cpp
 // Load a first font
 ImFont* font = io.Fonts->AddFontDefault();
@@ -192,7 +191,7 @@ ImGuiIO& io = ImGui::GetIO();
 io.Fonts->AddFontFromFileTTF("NotoSansCJKjp-Medium.otf");
 ```
 
-**Before 1.92, or without an up to date backend:**
+:rewind: **Before 1.92, or without an up to date backend:**
 ```cpp
 ImGuiIO& io = ImGui::GetIO();
 io.Fonts->AddFontFromFileTTF("NotoSansCJKjp-Medium.otf", 20.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
@@ -276,7 +275,7 @@ config.MergeMode = true;
 config.GlyphMinAdvanceX = 13.0f; // Use if you want to make the icon monospaced
 io.Fonts->AddFontFromFileTTF("fonts/fontawesome-webfont.ttf", 13.0f, &config);
 ```
-**Before 1.92:**
+:rewind: **Before 1.92:**
 ```cpp
 // Merge icons into default tool font
 #include "IconsFontAwesome.h"
@@ -313,11 +312,49 @@ Here's an application using icons ("Avoyd", https://www.avoyd.com):
 
 ---------------------------------------
 
+### Excluding Overlapping Ranges
+
+🆕 **Since 1.92, with an up to date backend: glyphs ranges are ignored**: when loading a glyph, input fonts in the merge list are queried in order. The first font which has the glyph loads it.
+<BR>‼️ **If you are merging several fonts, you may have undesirable overlapping ranges.** You can use `ImFontConfig::GlyphExcludeRanges[] `to specify ranges to ignore in a given Input.
+
+```cpp
+// Add Font Source 1 but ignore ICON_MIN_FA..ICON_MAX_FA range
+static ImWchar exclude_ranges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
+ImFontConfig cfg1;
+cfg1.GlyphExcludeRanges = exclude_ranges;
+io.Fonts->AddFontFromFileTTF("segoeui.ttf", 0.0f, &cfg1);
+
+// Add Font Source 2, which expects to use the range above
+ImFontConfig cfg2;
+cfg2.MergeMode = true;
+io.Fonts->AddFontFromFileTTF("FontAwesome4.ttf", 0.0f, &cfg2);
+```
+Another (silly) example:
+```cpp
+// Remove 'A'-'Z' from first font
+static ImWchar exclude_ranges[] = { 'A', 'Z', 0 };
+ImFontConfig cfg1;
+cfg1.GlyphExcludeRanges = exclude_ranges;
+io.Fonts->AddFontFromFileTTF("segoeui.ttf", 0.0f, &cfg1);
+
+// Load another font to fill the gaps
+ImFontConfig cfg2;
+cfg2.MergeMode = true;
+io.Fonts->AddFontFromFileTTF("Roboto-Medium.ttf", 0.0f, &cfg2);
+```
+![image](https://github.com/user-attachments/assets/f3d751d3-1aee-4698-bd9b-f511902f56bb)
+
+You can use `Metrics/Debugger->Fonts->Font->Input Glyphs Overlap Detection Tool` to see list of glyphs available in multiple font sources. This can facilitate understanding which font input is providing which glyph.
+
+##### [Return to Index](#index)
+
+---------------------------------------
+
 ## Using FreeType Rasterizer (imgui_freetype)
 
 - Dear ImGui uses [stb_truetype.h](https://github.com/nothings/stb/) to rasterize fonts (with optional oversampling). This technique and its implementation are not ideal for fonts rendered at small sizes, which may appear a little blurry or hard to read.
-- You can however use `imgui_freetype.cpp` from the [misc/freetype/](https://github.com/ocornut/imgui/tree/master/misc/freetype) folder.
-- FreeType supports auto-hinting which tends to improve the readability of small fonts.
+- You can however use `imgui_freetype.cpp` from the [misc/freetype/](https://github.com/ocornut/imgui/tree/master/misc/freetype) folder. Compile with this file and add `#define IMGUI_ENABLE_FREETYPE` to your imconfig.h file or build system to automatically activate it.
+- FreeType supports auto-hinting which tends to improve the readability of small fonts. It makes a big difference especially at smaller resolutions.
 - Read documentation in the [misc/freetype/](https://github.com/ocornut/imgui/tree/master/misc/freetype) folder.
 - Correct sRGB space blending will have an important effect on your font rendering quality.
 
@@ -350,9 +387,9 @@ io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguiemj.ttf", 16.0f, &cfg);
 
 ## Using Custom Glyph Ranges
 
-🆕 **Since 1.92, with an up to date backend: specifying glyph ranges is necessary, so this is not needed.**
+🆕 **Since 1.92, with an up to date backend: specifying glyph ranges is unnecessary. Therefore this is not really useful any more.**
 
-You can use the `ImFontGlyphRangesBuilder` helper to create glyph ranges based on text input. For example: for a game where your script is known, if you can feed your entire script to it and only build the characters the game needs.
+:rewind: You can use the `ImFontGlyphRangesBuilder` helper to create glyph ranges based on text input. For example: for a game where your script is known, if you can feed your entire script to it and only build the characters the game needs.
 ```cpp
 ImVector<ImWchar> ranges;
 ImFontGlyphRangesBuilder builder;
@@ -378,7 +415,7 @@ TL;DR; With the new system, it is recommended that you create a custom `ImFontLo
 
 You can ask questions in [#8466](https://github.com/ocornut/imgui/issues/8466).
 
-**Before 1.92:**
+:rewind: **Before 1.92:**
 
 As an alternative to rendering colorful glyphs using imgui_freetype with `ImGuiFreeTypeBuilderFlags_LoadColor`, you may allocate your own space in the texture atlas and write yourself into it. **(This is a BETA api, use if you are familiar with dear imgui and with your rendering backend)**
 

@@ -1,4 +1,4 @@
-// dear imgui, v1.92.0 WIP
+// dear imgui, v1.92.1 WIP
 // (drawing and font code)
 
 /*
@@ -2566,6 +2566,7 @@ void ImTextureData::DestroyPixels()
 //-----------------------------------------------------------------------------
 // - ImFontBaked_BuildGrowIndex()
 // - ImFontBaked_BuildLoadGlyph()
+// - ImFontBaked_BuildLoadGlyphAdvanceX()
 // - ImFontAtlasDebugLogTextureRequests()
 //-----------------------------------------------------------------------------
 // - ImFontAtlasGetFontLoaderForStbTruetype()
@@ -2663,6 +2664,11 @@ void ImFontAtlas::Clear()
 void ImFontAtlas::CompactCache()
 {
     ImFontAtlasTextureCompact(this);
+}
+
+void ImFontAtlas::SetFontLoader(const ImFontLoader* font_loader)
+{
+    ImFontAtlasBuildSetupFontLoader(this, font_loader);
 }
 
 void ImFontAtlas::ClearInputData()
@@ -3108,7 +3114,7 @@ ImFont* ImFontAtlas::AddFontDefault(const ImFontConfig* font_cfg_template)
     if (font_cfg.Name[0] == '\0')
         ImFormatString(font_cfg.Name, IM_ARRAYSIZE(font_cfg.Name), "ProggyClean.ttf");
     font_cfg.EllipsisChar = (ImWchar)0x0085;
-    font_cfg.GlyphOffset.y = 1.0f * IM_TRUNC(font_cfg.SizePixels / 13.0f);  // Add +1 offset per 13 units
+    font_cfg.GlyphOffset.y += 1.0f * IM_TRUNC(font_cfg.SizePixels / 13.0f);  // Add +1 offset per 13 units
 
     int ttf_compressed_size = 0;
     const char* ttf_compressed = GetDefaultCompressedFontDataTTF(&ttf_compressed_size);
@@ -4184,9 +4190,9 @@ void ImFontAtlasBuildInit(ImFontAtlas* atlas)
     if (atlas->FontLoader == NULL)
     {
 #ifdef IMGUI_ENABLE_FREETYPE
-        ImFontAtlasBuildSetupFontLoader(atlas, ImGuiFreeType::GetFontLoader());
+        atlas->SetFontLoader(ImGuiFreeType::GetFontLoader());
 #elif defined(IMGUI_ENABLE_STB_TRUETYPE)
-        ImFontAtlasBuildSetupFontLoader(atlas, ImFontAtlasGetFontLoaderForStbTruetype());
+        atlas->SetFontLoader(ImFontAtlasGetFontLoaderForStbTruetype());
 #else
         IM_ASSERT(0); // Invalid Build function
 #endif
@@ -4410,7 +4416,7 @@ static void ImFontAtlas_FontHookRemapCodepoint(ImFontAtlas* atlas, ImFont* font,
         *c = (ImWchar)font->RemapPairs.GetInt((ImGuiID)*c, (int)*c);
 }
 
-static ImFontGlyph* ImFontBaked_BuildLoadGlyph(ImFontBaked* baked, ImWchar codepoint)
+static ImFontGlyph* ImFontBaked_BuildLoadGlyph(ImFontBaked* baked, ImWchar codepoint, float* only_load_advance_x)
 {
     ImFont* font = baked->ContainerFont;
     ImFontAtlas* atlas = font->ContainerAtlas;
@@ -4443,13 +4449,25 @@ static ImFontGlyph* ImFontBaked_BuildLoadGlyph(ImFontBaked* baked, ImWchar codep
         const ImFontLoader* loader = src->FontLoader ? src->FontLoader : atlas->FontLoader;
         if (!src->GlyphExcludeRanges || ImFontAtlasBuildAcceptCodepointForSource(src, codepoint))
         {
-            ImFontGlyph glyph_buf;
-            if (loader->FontBakedLoadGlyph(atlas, src, baked, loader_user_data_p, codepoint, &glyph_buf))
+            if (only_load_advance_x == NULL)
             {
-                // FIXME: Add hooks for e.g. #7962
-                glyph_buf.Codepoint = src_codepoint;
-                glyph_buf.SourceIdx = src_n;
-                return ImFontAtlasBakedAddFontGlyph(atlas, baked, src, &glyph_buf);
+                ImFontGlyph glyph_buf;
+                if (loader->FontBakedLoadGlyph(atlas, src, baked, loader_user_data_p, codepoint, &glyph_buf, NULL))
+                {
+                    // FIXME: Add hooks for e.g. #7962
+                    glyph_buf.Codepoint = src_codepoint;
+                    glyph_buf.SourceIdx = src_n;
+                    return ImFontAtlasBakedAddFontGlyph(atlas, baked, src, &glyph_buf);
+                }
+            }
+            else
+            {
+                // Special mode but only loading glyphs metrics. Will rasterize and pack later.
+                if (loader->FontBakedLoadGlyph(atlas, src, baked, loader_user_data_p, codepoint, NULL, only_load_advance_x))
+                {
+                    ImFontAtlasBakedAddFontGlyphAdvancedX(atlas, baked, src, codepoint, *only_load_advance_x);
+                    return NULL;
+                }
             }
         }
         loader_user_data_p += loader->FontBakedSrcLoaderDataSize;
@@ -4469,12 +4487,27 @@ static ImFontGlyph* ImFontBaked_BuildLoadGlyph(ImFontBaked* baked, ImWchar codep
     return NULL;
 }
 
+static float ImFontBaked_BuildLoadGlyphAdvanceX(ImFontBaked* baked, ImWchar codepoint)
+{
+    if (baked->Size >= IMGUI_FONT_SIZE_THRESHOLD_FOR_LOADADVANCEXONLYMODE)
+    {
+        // First load AdvanceX value used by CalcTextSize() API then load the rest when loaded by drawing API.
+        float only_advance_x = 0.0f;
+        ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(baked, (ImWchar)codepoint, &only_advance_x);
+        return glyph ? glyph->AdvanceX : only_advance_x;
+    }
+    else
+    {
+        ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(baked, (ImWchar)codepoint, NULL);
+        return glyph ? glyph->AdvanceX : baked->FallbackAdvanceX;
+    }
+}
+
 // The point of this indirection is to not be inlined in debug mode in order to not bloat inner loop.b
 IM_MSVC_RUNTIME_CHECKS_OFF
 static float BuildLoadGlyphGetAdvanceOrFallback(ImFontBaked* baked, unsigned int codepoint)
 {
-    ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(baked, (ImWchar)codepoint);
-    return glyph ? glyph->AdvanceX : baked->FallbackAdvanceX;
+    return ImFontBaked_BuildLoadGlyphAdvanceX(baked, (ImWchar)codepoint);
 }
 IM_MSVC_RUNTIME_CHECKS_RESTORE
 
@@ -4595,7 +4628,7 @@ static bool ImGui_ImplStbTrueType_FontBakedInit(ImFontAtlas* atlas, ImFontConfig
     return true;
 }
 
-static bool ImGui_ImplStbTrueType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConfig* src, ImFontBaked* baked, void*, ImWchar codepoint, ImFontGlyph* out_glyph)
+static bool ImGui_ImplStbTrueType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConfig* src, ImFontBaked* baked, void*, ImWchar codepoint, ImFontGlyph* out_glyph, float* out_advance_x)
 {
     // Search for first font which has the glyph
     ImGui_ImplStbTrueType_FontSrcData* bd_font_data = (ImGui_ImplStbTrueType_FontSrcData*)src->FontLoaderData;
@@ -4617,7 +4650,14 @@ static bool ImGui_ImplStbTrueType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontC
     int advance, lsb;
     stbtt_GetGlyphBitmapBoxSubpixel(&bd_font_data->FontInfo, glyph_index, scale_for_raster_x, scale_for_raster_y, 0, 0, &x0, &y0, &x1, &y1);
     stbtt_GetGlyphHMetrics(&bd_font_data->FontInfo, glyph_index, &advance, &lsb);
-    const bool is_visible = (x0 != x1 && y0 != y1);
+
+    // Load metrics only mode
+    if (out_advance_x != NULL)
+    {
+        IM_ASSERT(out_glyph == NULL);
+        *out_advance_x = advance * scale_for_layout;
+        return true;
+    }
 
     // Prepare glyph
     out_glyph->Codepoint = codepoint;
@@ -4625,6 +4665,7 @@ static bool ImGui_ImplStbTrueType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontC
 
     // Pack and retrieve position inside texture atlas
     // (generally based on stbtt_PackFontRangesRenderIntoRects)
+    const bool is_visible = (x0 != x1 && y0 != y1);
     if (is_visible)
     {
         const int w = (x1 - x0 + oversample_h - 1);
@@ -5125,6 +5166,29 @@ ImFontGlyph* ImFontAtlasBakedAddFontGlyph(ImFontAtlas* atlas, ImFontBaked* baked
     return glyph;
 }
 
+// FIXME: Code is duplicated with code above.
+void ImFontAtlasBakedAddFontGlyphAdvancedX(ImFontAtlas* atlas, ImFontBaked* baked, ImFontConfig* src, ImWchar codepoint, float advance_x)
+{
+    IM_UNUSED(atlas);
+    if (src != NULL)
+    {
+        // Clamp & recenter if needed
+        const float ref_size = baked->ContainerFont->Sources[0]->SizePixels;
+        const float offsets_scale = (ref_size != 0.0f) ? (baked->Size / ref_size) : 1.0f;
+        advance_x = ImClamp(advance_x, src->GlyphMinAdvanceX * offsets_scale, src->GlyphMaxAdvanceX * offsets_scale);
+
+        // Snap to pixel
+        if (src->PixelSnapH)
+            advance_x = IM_ROUND(advance_x);
+
+        // Bake spacing
+        advance_x += src->GlyphExtraAdvanceX;
+    }
+
+    ImFontBaked_BuildGrowIndex(baked, codepoint + 1);
+    baked->IndexAdvanceX[codepoint] = advance_x;
+}
+
 // Copy to texture, post-process and queue update for backend
 void ImFontAtlasBakedSetFontGlyphBitmap(ImFontAtlas* atlas, ImFontBaked* baked, ImFontConfig* src, ImFontGlyph* glyph, ImTextureRect* r, const unsigned char* src_pixels, ImTextureFormat src_fmt, int src_pitch)
 {
@@ -5152,7 +5216,7 @@ ImFontGlyph* ImFontBaked::FindGlyph(ImWchar c)
         if (i != IM_FONTGLYPH_INDEX_UNUSED)
             return &Glyphs.Data[i];
     }
-    ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(this, c);
+    ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(this, c, NULL);
     return glyph ? glyph : &Glyphs.Data[FallbackGlyphIndex];
 }
 
@@ -5168,7 +5232,7 @@ ImFontGlyph* ImFontBaked::FindGlyphNoFallback(ImWchar c)
             return &Glyphs.Data[i];
     }
     LockLoadingFallback = true; // This is actually a rare call, not done in hot-loop, so we prioritize not adding extra cruft to ImFontBaked_BuildLoadGlyph() call sites.
-    ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(this, c);
+    ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(this, c, NULL);
     LockLoadingFallback = false;
     return glyph;
 }
@@ -5211,10 +5275,7 @@ float ImFontBaked::GetCharAdvance(ImWchar c)
         if (x >= 0.0f)
             return x;
     }
-
-    // Same as BuildLoadGlyphGetAdvanceOrFallback():
-    const ImFontGlyph* glyph = ImFontBaked_BuildLoadGlyph(this, c);
-    return glyph ? glyph->AdvanceX : FallbackAdvanceX;
+    return ImFontBaked_BuildLoadGlyphAdvanceX(this, c);
 }
 IM_MSVC_RUNTIME_CHECKS_RESTORE
 
@@ -5233,7 +5294,7 @@ ImFontBaked* ImFont::GetFontBaked(float size, float density)
     ImFontBaked* baked = LastBaked;
 
     // Round font size
-    // - ImGui::PushFontSize() will already round, but other paths calling GetFontBaked() directly also needs it (e.g. ImFontAtlasBuildPreloadAllGlyphRanges)
+    // - ImGui::PushFont() will already round, but other paths calling GetFontBaked() directly also needs it (e.g. ImFontAtlasBuildPreloadAllGlyphRanges)
     size = ImGui::GetRoundedFontSize(size);
 
     if (density < 0.0f)
@@ -5587,7 +5648,6 @@ begin:
         return;
 
     // Reserve vertices for remaining worse case (over-reserving is useful and easily amortized)
-    const int cmd_count = draw_list->CmdBuffer.Size;
     const int vtx_count_max = (int)(text_end - s) * 4;
     const int idx_count_max = (int)(text_end - s) * 6;
     const int idx_expected_size = draw_list->IdxBuffer.Size + idx_count_max;
@@ -5595,6 +5655,7 @@ begin:
     ImDrawVert*  vtx_write = draw_list->_VtxWritePtr;
     ImDrawIdx*   idx_write = draw_list->_IdxWritePtr;
     unsigned int vtx_index = draw_list->_VtxCurrentIdx;
+    const int cmd_count = draw_list->CmdBuffer.Size;
 
     const ImU32 col_untinted = col | ~IM_COL32_A_MASK;
     const char* word_wrap_eol = NULL;
@@ -5711,12 +5772,14 @@ begin:
     }
 
     // Edge case: calling RenderText() with unloaded glyphs triggering texture change. It doesn't happen via ImGui:: calls because CalcTextSize() is always used.
-    if (cmd_count != draw_list->CmdBuffer.Size)
+    if (cmd_count != draw_list->CmdBuffer.Size) //-V547
     {
         IM_ASSERT(draw_list->CmdBuffer[draw_list->CmdBuffer.Size - 1].ElemCount == 0);
         draw_list->CmdBuffer.pop_back();
         draw_list->PrimUnreserve(idx_count_max, vtx_count_max);
         draw_list->AddDrawCmd();
+        //IMGUI_DEBUG_LOG("RenderText: cancel and retry to missing glyphs.\n"); // [DEBUG]
+        //draw_list->AddRectFilled(pos, pos + ImVec2(10, 10), IM_COL32(255, 0, 0, 255)); // [DEBUG]
         goto begin;
         //RenderText(draw_list, size, pos, col, clip_rect, text_begin, text_end, wrap_width, cpu_fine_clip); // FIXME-OPT: Would a 'goto begin' be better for code-gen?
         //return;
