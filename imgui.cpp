@@ -401,7 +401,8 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
                           - likewise io.MousePos and GetMousePos() will use OS coordinates.
                             If you query mouse positions to interact with non-imgui coordinates you will need to offset them, e.g. subtract GetWindowViewport()->Pos.
 
- - 2025/06/25 (1.92.0) - layout: commented out legacy ErrorCheckUsingSetCursorPosToExtendParentBoundaries() fallback obsoleted in 1.89 (August 2022) which allowed a SetCursorPos()/SetCursorScreenPos() call WITHOUT AN ITEM
+ - 2025/07/31 (1.92.2) - Tabs: Renamed ImGuiTabBarFlags_FittingPolicyResizeDown to ImGuiTabBarFlags_FittingPolicyShrink. Kept inline redirection enum (will obsolete).
+ - 2025/06/25 (1.92.0) - Layout: commented out legacy ErrorCheckUsingSetCursorPosToExtendParentBoundaries() fallback obsoleted in 1.89 (August 2022) which allowed a SetCursorPos()/SetCursorScreenPos() call WITHOUT AN ITEM
                          to extend parent window/cell boundaries. Replaced with assert/tooltip that would already happens if previously using IMGUI_DISABLE_OBSOLETE_FUNCTIONS. (#5548, #4510, #3355, #1760, #1490, #4152, #150)
                          - Incorrect way to make a window content size 200x200:
                               Begin(...) + SetCursorScreenPos(GetCursorScreenPos() + ImVec2(200,200)) + End();
@@ -409,7 +410,7 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
                               Begin(...) + SetCursorScreenPos(GetCursorScreenPos() + ImVec2(200,200)) + Dummy(ImVec2(0,0)) + End();
                               Begin(...) + Dummy(ImVec2(200,200)) + End();
                          - TL;DR; if the assert triggers, you can add a Dummy({0,0}) call to validate extending parent boundaries.
->- 2025/06/11 (1.92.0) - Renamed/moved ImGuiConfigFlags_DpiEnableScaleFonts -> bool io.ConfigDpiScaleFonts.
+ - 2025/06/11 (1.92.0) - Renamed/moved ImGuiConfigFlags_DpiEnableScaleFonts -> bool io.ConfigDpiScaleFonts.
                        - Renamed/moved ImGuiConfigFlags_DpiEnableScaleViewports -> bool io.ConfigDpiScaleViewports. **Neither of those flags are very useful in current code. They will be useful once we merge font changes.**
  - 2025/06/11 (1.92.0) - THIS VERSION CONTAINS THE LARGEST AMOUNT OF BREAKING CHANGES SINCE 2015! I TRIED REALLY HARD TO KEEP THEM TO A MINIMUM, REDUCE THE AMOUNT OF INTERFERENCES, BUT INEVITABLY SOME USERS WILL BE AFFECTED.
                          IN ORDER TO HELP US IMPROVE THE TRANSITION PROCESS, INCL. DOCUMENTATION AND COMMENTS, PLEASE REPORT **ANY** DOUBT, CONFUSION, QUESTIONS, FEEDBACK TO: https://github.com/ocornut/imgui/issues/
@@ -1470,6 +1471,8 @@ ImGuiStyle::ImGuiStyle()
     ImageBorderSize             = 0.0f;             // Thickness of border around tabs.
     TabRounding                 = 5.0f;             // Radius of upper corners of a tab. Set to 0.0f to have rectangular tabs.
     TabBorderSize               = 0.0f;             // Thickness of border around tabs.
+    TabMinWidthBase             = 1.0f;             // Minimum tab width, to make tabs larger than their contents. TabBar buttons are not affected.
+    TabMinWidthShrink           = 80.0f;            // Minimum tab width after shrinking, when using ImGuiTabBarFlags_FittingPolicyMixed policy.
     TabCloseButtonMinWidthSelected   = -1.0f;       // -1: always visible. 0.0f: visible when hovered. >0.0f: visible when hovered if minimum width.
     TabCloseButtonMinWidthUnselected = 0.0f;        // -1: always visible. 0.0f: visible when hovered. >0.0f: visible when hovered if minimum width. FLT_MAX: never show close button when unselected.
     TabBarBorderSize            = 1.0f;             // Thickness of tab-bar separator, which takes on the tab active color to denote focus.
@@ -1537,6 +1540,8 @@ void ImGuiStyle::ScaleAllSizes(float scale_factor)
     LogSliderDeadzone = ImTrunc(LogSliderDeadzone * scale_factor);
     ImageBorderSize = ImTrunc(ImageBorderSize * scale_factor);
     TabRounding = ImTrunc(TabRounding * scale_factor);
+    TabMinWidthBase = ImTrunc(TabMinWidthBase * scale_factor);
+    TabMinWidthShrink = ImTrunc(TabMinWidthShrink * scale_factor);
     TabCloseButtonMinWidthSelected = (TabCloseButtonMinWidthSelected > 0.0f && TabCloseButtonMinWidthSelected != FLT_MAX) ? ImTrunc(TabCloseButtonMinWidthSelected * scale_factor) : TabCloseButtonMinWidthSelected;
     TabCloseButtonMinWidthUnselected = (TabCloseButtonMinWidthUnselected > 0.0f && TabCloseButtonMinWidthUnselected != FLT_MAX) ? ImTrunc(TabCloseButtonMinWidthUnselected * scale_factor) : TabCloseButtonMinWidthUnselected;
     TabBarOverlineSize = ImTrunc(TabBarOverlineSize * scale_factor);
@@ -3213,7 +3218,7 @@ static void ImGuiListClipper_SeekCursorAndSetupPrevLine(float pos_y, float line_
             ImGui::TableEndRow(table);
         table->RowPosY2 = window->DC.CursorPos.y;
         const int row_increase = (int)((off_y / line_height) + 0.5f);
-        //table->CurrentRow += row_increase; // Can't do without fixing TableEndRow()
+        table->CurrentRow += row_increase;
         table->RowBgColorCounter += row_increase;
     }
 }
@@ -3595,6 +3600,8 @@ static const ImGuiStyleVarInfo GStyleVarsInfo[] =
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, ImageBorderSize) },           // ImGuiStyleVar_ImageBorderSize
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TabRounding) },               // ImGuiStyleVar_TabRounding
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TabBorderSize) },             // ImGuiStyleVar_TabBorderSize
+    { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TabMinWidthBase) },           // ImGuiStyleVar_TabMinWidthBase
+    { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TabMinWidthShrink) },         // ImGuiStyleVar_TabMinWidthShrink
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TabBarBorderSize) },          // ImGuiStyleVar_TabBarBorderSize
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TabBarOverlineSize) },        // ImGuiStyleVar_TabBarOverlineSize
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TableAngledHeadersAngle)},    // ImGuiStyleVar_TableAngledHeadersAngle
@@ -4639,15 +4646,6 @@ void ImGui::SetActiveID(ImGuiID id, ImGuiWindow* window)
     // Clear previous active id
     if (g.ActiveId != 0)
     {
-        // While most behaved code would make an effort to not steal active id during window move/drag operations,
-        // we at least need to be resilient to it. Canceling the move is rather aggressive and users of 'master' branch
-        // may prefer the weird ill-defined half working situation ('docking' did assert), so may need to rework that.
-        if (g.MovingWindow != NULL && g.ActiveId == g.MovingWindow->MoveId)
-        {
-            IMGUI_DEBUG_LOG_ACTIVEID("SetActiveID() cancel MovingWindow\n");
-            g.MovingWindow = NULL;
-        }
-
         // Store deactivate data
         ImGuiDeactivatedItemData* deactivated_data = &g.DeactivatedItemData;
         deactivated_data->ID = g.ActiveId;
@@ -4660,6 +4658,15 @@ void ImGui::SetActiveID(ImGuiID id, ImGuiWindow* window)
         // One common scenario leading to this is: pressing Key ->NavMoveRequestApplyResult() -> ClearActiveID()
         if (g.InputTextState.ID == g.ActiveId)
             InputTextDeactivateHook(g.ActiveId);
+
+        // While most behaved code would make an effort to not steal active id during window move/drag operations,
+        // we at least need to be resilient to it. Canceling the move is rather aggressive and users of 'master' branch
+        // may prefer the weird ill-defined half working situation ('docking' did assert), so may need to rework that.
+        if (g.MovingWindow != NULL && g.ActiveId == g.MovingWindow->MoveId)
+        {
+            IMGUI_DEBUG_LOG_ACTIVEID("SetActiveID() cancel MovingWindow\n");
+            StopMouseMovingWindow();
+        }
     }
 
     // Set active id
@@ -5240,6 +5247,35 @@ void ImGui::StartMouseMovingWindowOrNode(ImGuiWindow* window, ImGuiDockNode* nod
         StartMouseMovingWindow(window);
 }
 
+// This is not 100% symetric with StartMouseMovingWindow().
+// We do NOT clear ActiveID, because:
+// - It would lead to rather confusing recursive code paths. Caller can call ClearActiveID() if desired.
+// - Some code intentionally cancel moving but keep the ActiveID to lock inputs (e.g. code path taken when clicking a disabled item).
+void ImGui::StopMouseMovingWindow()
+{
+    ImGuiContext& g = *GImGui;
+    ImGuiWindow* window = g.MovingWindow;
+
+    // Ref commits 6b7766817, 36055213c for some partial history on checking if viewport != NULL.
+    if (window && window->Viewport)
+    {
+        // Try to merge the window back into the main viewport.
+        // This works because MouseViewport should be != MovingWindow->Viewport on release (as per code in UpdateViewports)
+        if (g.ConfigFlagsCurrFrame & ImGuiConfigFlags_ViewportsEnable)
+            UpdateTryMergeWindowIntoHostViewport(window, g.MouseViewport);
+
+        // Restore the mouse viewport so that we don't hover the viewport _under_ the moved window during the frame we released the mouse button.
+        if (!IsDragDropPayloadBeingAccepted())
+            g.MouseViewport = window->Viewport;
+
+        // Clear the NoInputs window flag set by the Viewport system in AddUpdateViewport()
+        const bool window_can_use_inputs = ((window->Flags & ImGuiWindowFlags_NoMouseInputs) && (window->Flags & ImGuiWindowFlags_NoNavInputs)) == false;
+        if (window_can_use_inputs)
+            window->Viewport->Flags &= ~ImGuiViewportFlags_NoInputs;
+    }
+    g.MovingWindow = NULL;
+}
+
 // Handle mouse moving window
 // Note: moving window with the navigation keys (Square + d-pad / CTRL+TAB + Arrows) are processed in NavUpdateWindowing()
 // FIXME: We don't have strong guarantee that g.MovingWindow stay synced with g.ActiveId == g.MovingWindow->MoveId.
@@ -5257,8 +5293,8 @@ void ImGui::UpdateMouseMovingWindowNewFrame()
         ImGuiWindow* moving_window = g.MovingWindow->RootWindowDockTree;
 
         // When a window stop being submitted while being dragged, it may will its viewport until next Begin()
-        const bool window_disappared = (!moving_window->WasActive && !moving_window->Active);
-        if (g.IO.MouseDown[0] && IsMousePosValid(&g.IO.MousePos) && !window_disappared)
+        const bool window_disappeared = (!moving_window->WasActive && !moving_window->Active);
+        if (g.IO.MouseDown[0] && IsMousePosValid(&g.IO.MousePos) && !window_disappeared)
         {
             ImVec2 pos = g.IO.MousePos - g.ActiveIdClickOffset;
             if (moving_window->Pos.x != pos.x || moving_window->Pos.y != pos.y)
@@ -5274,23 +5310,7 @@ void ImGui::UpdateMouseMovingWindowNewFrame()
         }
         else
         {
-            if (!window_disappared)
-            {
-                // Try to merge the window back into the main viewport.
-                // This works because MouseViewport should be != MovingWindow->Viewport on release (as per code in UpdateViewports)
-                if (g.ConfigFlagsCurrFrame & ImGuiConfigFlags_ViewportsEnable)
-                    UpdateTryMergeWindowIntoHostViewport(moving_window, g.MouseViewport);
-
-                // Restore the mouse viewport so that we don't hover the viewport _under_ the moved window during the frame we released the mouse button.
-                if (moving_window->Viewport && !IsDragDropPayloadBeingAccepted())
-                    g.MouseViewport = moving_window->Viewport;
-
-                // Clear the NoInput window flag set by the Viewport system
-                if (moving_window->Viewport)
-                    moving_window->Viewport->Flags &= ~ImGuiViewportFlags_NoInputs;
-            }
-
-            g.MovingWindow = NULL;
+            StopMouseMovingWindow();
             ClearActiveID();
         }
     }
@@ -5331,6 +5351,9 @@ void ImGui::UpdateMouseMovingWindowEndFrame()
         if (root_window != NULL && !is_closed_popup)
         {
             StartMouseMovingWindow(g.HoveredWindow); //-V595
+
+            // FIXME: In principal we might be able to call StopMouseMovingWindow() below.
+            // Please note how StartMouseMovingWindow() and StopMouseMovingWindow() and not entirely symetrical, at the later doesn't clear ActiveId.
 
             // Cancel moving if clicked outside of title bar
             if (g.IO.ConfigWindowsMoveFromTitleBarOnly)
@@ -17418,9 +17441,10 @@ ImGuiViewportP* ImGui::AddUpdateViewport(ImGuiWindow* window, ImGuiID id, const 
     flags |= ImGuiViewportFlags_IsPlatformWindow;
     if (window != NULL)
     {
+        const bool window_can_use_inputs = ((window->Flags & ImGuiWindowFlags_NoMouseInputs) && (window->Flags & ImGuiWindowFlags_NoNavInputs)) == false;
         if (g.MovingWindow && g.MovingWindow->RootWindowDockTree == window)
             flags |= ImGuiViewportFlags_NoInputs | ImGuiViewportFlags_NoFocusOnAppearing;
-        if ((window->Flags & ImGuiWindowFlags_NoMouseInputs) && (window->Flags & ImGuiWindowFlags_NoNavInputs))
+        if (!window_can_use_inputs)
             flags |= ImGuiViewportFlags_NoInputs;
         if (window->Flags & ImGuiWindowFlags_NoFocusOnAppearing)
             flags |= ImGuiViewportFlags_NoFocusOnAppearing;
@@ -19851,7 +19875,8 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
 
     // Begin tab bar
     ImGuiTabBarFlags tab_bar_flags = ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs; // | ImGuiTabBarFlags_NoTabListScrollingButtons);
-    tab_bar_flags |= ImGuiTabBarFlags_SaveSettings | ImGuiTabBarFlags_DockNode;// | ImGuiTabBarFlags_FittingPolicyScroll;
+    tab_bar_flags |= ImGuiTabBarFlags_SaveSettings | ImGuiTabBarFlags_DockNode;
+    tab_bar_flags |= ImGuiTabBarFlags_FittingPolicyMixed; // Enforce default policy. Since 1.92.2 this is now reasonable. May expose later if needed. (#8800, #3421)
     tab_bar_flags |= ImGuiTabBarFlags_DrawSelectedOverline;
     if (!host_window->Collapsed && is_focused)
         tab_bar_flags |= ImGuiTabBarFlags_IsFocused;
