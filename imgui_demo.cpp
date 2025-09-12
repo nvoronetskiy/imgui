@@ -3312,7 +3312,7 @@ static void DemoWindowWidgetsSelectionAndMultiSelect(ImGuiDemoWindowData* demo_d
                     ImGui::BeginTable("##Split", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX);
                     ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 0.70f);
                     ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 0.30f);
-                    //ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacingY, 0.0f);
+                    //ImGui::PushStyleVarY(ImGuiStyleVar_ItemSpacing, 0.0f);
                 }
 
                 ImGuiListClipper clipper;
@@ -5413,7 +5413,7 @@ static void DemoWindowPopups()
     // Typical use for regular windows:
     //   bool my_tool_is_active = false; if (ImGui::Button("Open")) my_tool_is_active = true; [...] if (my_tool_is_active) Begin("My Tool", &my_tool_is_active) { [...] } End();
     // Typical use for popups:
-    //   if (ImGui::Button("Open")) ImGui::OpenPopup("MyPopup"); if (ImGui::BeginPopup("MyPopup") { [...] EndPopup(); }
+    //   if (ImGui::Button("Open")) ImGui::OpenPopup("MyPopup"); if (ImGui::BeginPopup("MyPopup")) { [...] EndPopup(); }
 
     // With popups we have to go through a library call (here OpenPopup) to manipulate the visibility state.
     // This may be a bit confusing at first but it should quickly make sense. Follow on the examples below.
@@ -5999,7 +5999,7 @@ static void DemoWindowTables()
         ImGui::SameLine(); ImGui::RadioButton("Text", &contents_type, CT_Text);
         ImGui::SameLine(); ImGui::RadioButton("FillButton", &contents_type, CT_FillButton);
         ImGui::Checkbox("Display headers", &display_headers);
-        ImGui::CheckboxFlags("ImGuiTableFlags_NoBordersInBody", &flags, ImGuiTableFlags_NoBordersInBody); ImGui::SameLine(); HelpMarker("Disable vertical borders in columns Body (borders will always appear in Headers");
+        ImGui::CheckboxFlags("ImGuiTableFlags_NoBordersInBody", &flags, ImGuiTableFlags_NoBordersInBody); ImGui::SameLine(); HelpMarker("Disable vertical borders in columns Body (borders will always appear in Headers)");
         PopStyleCompact();
 
         if (ImGui::BeginTable("table1", 3, flags))
@@ -7492,7 +7492,7 @@ static void DemoWindowTables()
                 ImGui::CheckboxFlags("ImGuiTableFlags_BordersH", &flags, ImGuiTableFlags_BordersH);
                 ImGui::CheckboxFlags("ImGuiTableFlags_BordersOuterH", &flags, ImGuiTableFlags_BordersOuterH);
                 ImGui::CheckboxFlags("ImGuiTableFlags_BordersInnerH", &flags, ImGuiTableFlags_BordersInnerH);
-                ImGui::CheckboxFlags("ImGuiTableFlags_NoBordersInBody", &flags, ImGuiTableFlags_NoBordersInBody); ImGui::SameLine(); HelpMarker("Disable vertical borders in columns Body (borders will always appear in Headers");
+                ImGui::CheckboxFlags("ImGuiTableFlags_NoBordersInBody", &flags, ImGuiTableFlags_NoBordersInBody); ImGui::SameLine(); HelpMarker("Disable vertical borders in columns Body (borders will always appear in Headers)");
                 ImGui::CheckboxFlags("ImGuiTableFlags_NoBordersInBodyUntilResize", &flags, ImGuiTableFlags_NoBordersInBodyUntilResize); ImGui::SameLine(); HelpMarker("Disable vertical borders in columns Body until hovered for resize (borders will always appear in Headers)");
                 ImGui::TreePop();
             }
@@ -8476,22 +8476,34 @@ void ImGui::ShowAboutWindow(bool* p_open)
 //-----------------------------------------------------------------------------
 
 // Demo helper function to select among default colors. See ShowStyleEditor() for more advanced options.
-// Here we use the simplified Combo() api that packs items into a single literal string.
-// Useful for quick combo boxes where the choices are known locally.
 bool ImGui::ShowStyleSelector(const char* label)
 {
+    // FIXME: This is a bit tricky to get right as style are functions, they don't register a name nor the fact that one is active.
+    // So we keep track of last active one among our limited selection.
     static int style_idx = -1;
-    if (ImGui::Combo(label, &style_idx, "Dark\0Light\0Classic\0"))
+    const char* style_names[] = { "Dark", "Light", "Classic" };
+    bool ret = false;
+    if (ImGui::BeginCombo(label, (style_idx >= 0 && style_idx < IM_ARRAYSIZE(style_names)) ? style_names[style_idx] : ""))
     {
-        switch (style_idx)
+        for (int n = 0; n < IM_ARRAYSIZE(style_names); n++)
         {
-        case 0: ImGui::StyleColorsDark(); break;
-        case 1: ImGui::StyleColorsLight(); break;
-        case 2: ImGui::StyleColorsClassic(); break;
+            if (ImGui::Selectable(style_names[n], style_idx == n, ImGuiSelectableFlags_SelectOnNav))
+            {
+                style_idx = n;
+                ret = true;
+                switch (style_idx)
+                {
+                case 0: ImGui::StyleColorsDark(); break;
+                case 1: ImGui::StyleColorsLight(); break;
+                case 2: ImGui::StyleColorsClassic(); break;
+                }
+            }
+            else if (style_idx == n)
+                ImGui::SetItemDefaultFocus();
         }
-        return true;
+        ImGui::EndCombo();
     }
-    return false;
+    return ret;
 }
 
 static const char* GetTreeLinesFlagsName(ImGuiTreeNodeFlags flags)
@@ -9543,10 +9555,9 @@ static void ShowExampleAppLayout(bool* p_open)
             ImGui::BeginChild("left pane", ImVec2(150, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
             for (int i = 0; i < 100; i++)
             {
-                // FIXME: Good candidate to use ImGuiSelectableFlags_SelectOnNav
                 char label[128];
                 sprintf(label, "MyObject %d", i);
-                if (ImGui::Selectable(label, selected == i))
+                if (ImGui::Selectable(label, selected == i, ImGuiSelectableFlags_SelectOnNav))
                     selected = i;
             }
             ImGui::EndChild();
@@ -9898,7 +9909,7 @@ static void ShowExampleAppConstrainedResize(bool* p_open)
         IMGUI_DEMO_MARKER("Examples/Constrained Resizing window");
         if (ImGui::GetIO().KeyShift)
         {
-            // Display a dummy viewport (in your real app you would likely use ImageButton() to display a texture.
+            // Display a dummy viewport (in your real app you would likely use ImageButton() to display a texture)
             ImVec2 avail_size = ImGui::GetContentRegionAvail();
             ImVec2 pos = ImGui::GetCursorScreenPos();
             ImGui::ColorButton("viewport", ImVec4(0.5f, 0.2f, 0.5f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, avail_size);
