@@ -36,6 +36,45 @@ HOW TO UPDATE?
 - Please report any issue!
 
 -----------------------------------------------------------------------
+ VERSION 1.92.4 WIP (In Progress)
+-----------------------------------------------------------------------
+
+Breaking Changes:
+
+- Viewports: for consistency with other config flags, renamed
+     io.ConfigViewportPlatformFocusSetsImGuiFocus
+  to io.ConfigViewportsPlatformFocusSetsImGuiFocus. (#6299, #6462)
+  It was really a typo in the first place, and introduced in 1.92.2.s
+
+Other Changes:
+
+- IO: added ImGuiPlatformIO::ClearPlatformHandlers(), ClearRendererHandlers()
+  helpers to null all handlers. (#8945, #2769)
+- Backends: all backends call ImGuiPlatformIO::ClearPlatformHandlers() and
+  ClearRendererHandlers() on shutdown, so as not to leave function pointers
+  which may be dangling when using backend in e.g. DLL. (#8945, #2769)
+
+Docking+Viewports Branch:
+
+- Nav: fixed a crash that could occur when opening a popup following the processing
+  of a global shortcut while no windows were focused (the fix done in 1.92.3 was
+  incomplete for docking branch).
+- Viewports: fixed a bug where ImGuiWindowFlags_NoBringToFrontOnFocus would effectivey
+  be ignored when windows first appear and viewports are enabled. (#7008) [@jshofmann]
+- Viewports: changed default value of io.ConfigViewportsNoDefaultParent to true. (#8948)
+- Viewports: fixed an issue inferring Z-order when attempting to merge a viewport
+  back in the the main/hosting viewport. (#8948)
+  Note that for GLFW/SDL2/OSX backends, which do not support honoring ParentViewportID.
+  setting io.ConfigViewportsNoDefaultParent=true will align imgui's expectation
+  with what the backend does.
+- Viewports: DestroyContext() does not call DestroyPlatformWindows() anymore at
+  it assumed to be unnecessary as backensd should have done it and we check that
+  backends have been shutdown since 1.90.4. Changed into asserts. (#7175, #8945)
+- Backends: Vulkan: Added ImGui_ImplVulkanH_GetWindowDataFromViewport() accessor/helper.
+  (#8946, #8940) [@olivier-gerard]
+
+
+-----------------------------------------------------------------------
  VERSION 1.92.3 (Released 2025-09-17)
 -----------------------------------------------------------------------
 
