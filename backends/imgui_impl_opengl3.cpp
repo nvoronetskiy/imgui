@@ -721,7 +721,7 @@ void    ImGui_ImplOpenGL3_RenderDrawData(ImDrawData* draw_data)
     (void)bd; // Not all compilation paths use this
 }
 
-void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, GLuint vertex_array_object)
+void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, unsigned int vertex_array_object)
 {
     // Avoid rendering when minimized, scale coordinates for retina displays (screen coordinates != framebuffer coordinates)
     int fb_width = (int)(draw_data->DisplaySize.x * draw_data->FramebufferScale.x);
