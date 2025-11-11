@@ -721,7 +721,7 @@ void    ImGui_ImplOpenGL3_RenderDrawData(ImDrawData* draw_data)
     (void)bd; // Not all compilation paths use this
 }
 
-void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data)
+void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, GLuint vertex_array_object)
 {
     // Avoid rendering when minimized, scale coordinates for retina displays (screen coordinates != framebuffer coordinates)
     int fb_width = (int)(draw_data->DisplaySize.x * draw_data->FramebufferScale.x);
@@ -740,13 +740,6 @@ void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data)
             if (tex->Status != ImTextureStatus_OK)
                 ImGui_ImplOpenGL3_UpdateTexture(tex);
 
-    // Setup desired GL state
-    // Recreate the VAO every time (this is to easily allow multiple GL contexts to be rendered to. VAO are not shared among GL contexts)
-    // The renderer would actually work without any VAO bound, but then our VertexAttrib calls would overwrite the default one currently bound.
-    GLuint vertex_array_object = 0;
-#ifdef IMGUI_IMPL_OPENGL_USE_VERTEX_ARRAY
-    GL_CALL(glGenVertexArrays(1, &vertex_array_object));
-#endif
     ImGui_ImplOpenGL3_SetupRenderState(draw_data, fb_width, fb_height, vertex_array_object);
 
     // Will project scissor/clipping rectangles into framebuffer space
@@ -821,11 +814,6 @@ void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data)
             }
         }
     }
-
-    // Destroy the temporary VAO
-#ifdef IMGUI_IMPL_OPENGL_USE_VERTEX_ARRAY
-    GL_CALL(glDeleteVertexArrays(1, &vertex_array_object));
-#endif
 }
 
 static void ImGui_ImplOpenGL3_DestroyTexture(ImTextureData* tex)
