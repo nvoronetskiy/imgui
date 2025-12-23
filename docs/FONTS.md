@@ -89,7 +89,10 @@ See [#8465](https://github.com/ocornut/imgui/issues/8465) for more details.
 
 ## How should I handle DPI in my application?
 
-See [FAQ entry](https://github.com/ocornut/imgui/blob/master/docs/FAQ.md#q-how-should-i-handle-dpi-in-my-application).
+Since 1.92, with an updated backend, you can set `style.FontScaleDpi = your_content_scale;` to scale all fonts.
+<BR>You can call  `style.ScaleAllSizes(xxx)` at init time or every frame at the beginning of your main loop to scale sizes/paddings.
+<BR>Since 1.92, with an updated backend, macOS style pixel/backing style scale is automatically handled.
+<BR>See [FAQ entry](https://github.com/ocornut/imgui/blob/master/docs/FAQ.md#q-how-should-i-handle-dpi-in-my-application) for more details.
 
 ##### [Return to Index](#index)
 
@@ -97,10 +100,22 @@ See [FAQ entry](https://github.com/ocornut/imgui/blob/master/docs/FAQ.md#q-how-s
 
 ## Fonts Loading Instructions
 
+**Select base size**
+```cpp
+ImGuiStyle& style = ImGui::GetStyle();
+style.FontSizeBase = 20.0f;
+```
+
 **Load default font:**
 ```cpp
 ImGuiIO& io = ImGui::GetIO();
-io.Fonts->AddFontDefault();
+io.Fonts->AddFontDefault();        // Load embedded font (auto-selected).
+```
+```cpp
+io.Fonts->AddFontDefaultVector();  // Load embedded scalable font.
+```
+```cpp
+io.Fonts->AddFontDefaultBitmap();  // Load embedded bitmap font (legacy).
 ```
 
 **Load .TTF/.OTF file with:**
@@ -202,7 +217,7 @@ if (ImGui::Button(u8"ロード"))
 {
     // do stuff
 }
-ImGui::InputText("string", buf, IM_ARRAYSIZE(buf));
+ImGui::InputText("string", buf, IM_COUNTOF(buf));
 ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
 ```
 
@@ -228,6 +243,7 @@ ImFontConfig font_cfg;
 font_cfg.FontDataOwnedByAtlas = false;
 ImFont* font = io.Fonts->AddFontFromMemoryTTF(data, data_size, size_pixels, &font_cfg);
 ```
+IMPORTANT: Since 1.92, when using `FontDataOwnedByAtlas = false`, font data needs to available until `atlas->RemoveFont()`, or more typically until a shutdown of the owning context or font atlas. It was not immediately noticeable in 1.92.0 due to a bug in handling `FontDataOwnedByAtlas = false`, which was fixed in 1.92.6.
 
 ##### [Return to Index](#index)
 
@@ -438,7 +454,7 @@ unsigned char* tex_pixels = nullptr;
 int tex_width, tex_height;
 io.Fonts->GetTexDataAsRGBA32(&tex_pixels, &tex_width, &tex_height);
 
-for (int rect_n = 0; rect_n < IM_ARRAYSIZE(rect_ids); rect_n++)
+for (int rect_n = 0; rect_n < IM_COUNTOF(rect_ids); rect_n++)
     if (const ImTextureRect* rect = io.Fonts->GetCustomRect(rect_ids[rect_n]))
     {
         // Fill the custom rectangle with red pixels (in reality you would draw/copy your bitmap data here!)

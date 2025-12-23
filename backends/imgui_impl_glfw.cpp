@@ -32,6 +32,8 @@
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
 //  2025-XX-XX: Platform: Added support for multiple windows via the ImGuiPlatformIO interface.
+//  2025-12-12: Added IMGUI_IMPL_GLFW_DISABLE_X11 / IMGUI_IMPL_GLFW_DISABLE_WAYLAND to forcefully disable either.
+//  2025-12-10: Avoid repeated glfwSetCursor()/glfwSetInputMode() calls when unnecessary. Lowers overhead for very high framerates (e.g. 10k+ FPS).
 //  2025-11-06: Lower minimum requirement to GLFW 3.0. Though a recent version e.g GLFW 3.4 is highly recommended.
 //  2025-09-18: Call platform_io.ClearPlatformHandlers() on shutdown.
 //  2025-09-15: Content Scales are always reported as 1.0 on Wayland. FramebufferScale are always reported as 1.0 on X11. (#8920, #8921)
@@ -119,10 +121,15 @@
 #endif
 
 // GLFW
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
-#define GLFW_HAS_X11_OR_WAYLAND     1
+#if !defined(IMGUI_IMPL_GLFW_DISABLE_X11) && (defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__))
+#define GLFW_HAS_X11        1
 #else
-#define GLFW_HAS_X11_OR_WAYLAND     0
+#define GLFW_HAS_X11        0
+#endif
+#if !defined(IMGUI_IMPL_GLFW_DISABLE_WAYLAND) && (defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__))
+#define GLFW_HAS_WAYLAND    1
+#else
+#define GLFW_HAS_WAYLAND    0
 #endif
 #include <GLFW/glfw3.h>
 #ifdef _WIN32
@@ -136,7 +143,7 @@
 #define GLFW_EXPOSE_NATIVE_COCOA
 #endif
 #include <GLFW/glfw3native.h>
-#elif GLFW_HAS_X11_OR_WAYLAND
+#elif GLFW_HAS_X11
 #ifndef GLFW_EXPOSE_NATIVE_X11      // for glfwGetX11Display(), glfwGetX11Window() on Freedesktop (Linux, BSD, etc.)
 #define GLFW_EXPOSE_NATIVE_X11
 #include <X11/Xatom.h>
@@ -218,6 +225,7 @@ struct ImGui_ImplGlfw_Data
     GLFWwindow*             MouseWindow;
 #if GLFW_HAS_CREATECURSOR
     GLFWcursor*             MouseCursors[ImGuiMouseCursor_COUNT];
+    GLFWcursor*             LastMouseCursor;
 #endif
     bool                    MouseIgnoreButtonUpWaitForFocusLoss;
     bool                    MouseIgnoreButtonUp;
@@ -275,7 +283,7 @@ static void ImGui_ImplGlfw_ShutdownMultiViewportSupport();
 // Functions
 static bool ImGui_ImplGlfw_IsWayland()
 {
-#if !GLFW_HAS_X11_OR_WAYLAND
+#if !GLFW_HAS_WAYLAND
     return false;
 #elif GLFW_HAS_GETPLATFORM
     return glfwGetPlatform() == GLFW_PLATFORM_WAYLAND;
@@ -488,7 +496,7 @@ static int ImGui_ImplGlfw_TranslateUntranslatedKey(int key, int scancode)
     {
         const char char_names[] = "`-=[]\\,;\'./";
         const int char_keys[] = { GLFW_KEY_GRAVE_ACCENT, GLFW_KEY_MINUS, GLFW_KEY_EQUAL, GLFW_KEY_LEFT_BRACKET, GLFW_KEY_RIGHT_BRACKET, GLFW_KEY_BACKSLASH, GLFW_KEY_COMMA, GLFW_KEY_SEMICOLON, GLFW_KEY_APOSTROPHE, GLFW_KEY_PERIOD, GLFW_KEY_SLASH, 0 };
-        IM_ASSERT(IM_ARRAYSIZE(char_names) == IM_ARRAYSIZE(char_keys));
+        IM_ASSERT(IM_COUNTOF(char_names) == IM_COUNTOF(char_keys));
         if (key_name[0] >= '0' && key_name[0] <= '9')               { key = GLFW_KEY_0 + (key_name[0] - '0'); }
         else if (key_name[0] >= 'A' && key_name[0] <= 'Z')          { key = GLFW_KEY_A + (key_name[0] - 'A'); }
         else if (key_name[0] >= 'a' && key_name[0] <= 'z')          { key = GLFW_KEY_A + (key_name[0] - 'a'); }
@@ -513,7 +521,7 @@ void ImGui_ImplGlfw_KeyCallback(GLFWwindow* window, int keycode, int scancode, i
     ImGuiIO& io = ImGui::GetIO(bd->Context);
     ImGui_ImplGlfw_UpdateKeyModifiers(io, window);
 
-    if (keycode >= 0 && keycode < IM_ARRAYSIZE(bd->KeyOwnerWindows))
+    if (keycode >= 0 && keycode < IM_COUNTOF(bd->KeyOwnerWindows))
         bd->KeyOwnerWindows[keycode] = (action == GLFW_PRESS) ? window : nullptr;
 
     keycode = ImGui_ImplGlfw_TranslateUntranslatedKey(keycode, scancode);
@@ -940,15 +948,24 @@ static void ImGui_ImplGlfw_UpdateMouseCursor()
         GLFWwindow* window = (GLFWwindow*)platform_io.Viewports[n]->PlatformHandle;
         if (imgui_cursor == ImGuiMouseCursor_None || io.MouseDrawCursor)
         {
-            // Hide OS mouse cursor if imgui is drawing it or if it wants no cursor
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+            if (bd->LastMouseCursor != nullptr)
+            {
+                // Hide OS mouse cursor if imgui is drawing it or if it wants no cursor
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+                bd->LastMouseCursor = nullptr;
+            }
         }
         else
         {
             // Show OS mouse cursor
             // FIXME-PLATFORM: Unfocused windows seems to fail changing the mouse cursor with GLFW 3.2, but 3.3 works here.
 #if GLFW_HAS_CREATECURSOR
-            glfwSetCursor(window, bd->MouseCursors[imgui_cursor] ? bd->MouseCursors[imgui_cursor] : bd->MouseCursors[ImGuiMouseCursor_Arrow]);
+            GLFWcursor* cursor = bd->MouseCursors[imgui_cursor] ? bd->MouseCursors[imgui_cursor] : bd->MouseCursors[ImGuiMouseCursor_Arrow];
+            if (bd->LastMouseCursor != cursor)
+            {
+                glfwSetCursor(window, cursor);
+                bd->LastMouseCursor = cursor;
+            }
 #endif
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
@@ -1051,7 +1068,7 @@ static void ImGui_ImplGlfw_UpdateMonitors()
 // - Some accessibility applications are declaring virtual monitors with a DPI of 0.0f, see #7902. We preserve this value for caller to handle.
 float ImGui_ImplGlfw_GetContentScaleForWindow(GLFWwindow* window)
 {
-#if GLFW_HAS_X11_OR_WAYLAND
+#if GLFW_HAS_WAYLAND
     if (ImGui_ImplGlfw_Data* bd = ImGui_ImplGlfw_GetBackendData(window))
         if (bd->IsWayland)
             return 1.0f;
@@ -1068,7 +1085,7 @@ float ImGui_ImplGlfw_GetContentScaleForWindow(GLFWwindow* window)
 
 float ImGui_ImplGlfw_GetContentScaleForMonitor(GLFWmonitor* monitor)
 {
-#if GLFW_HAS_X11_OR_WAYLAND
+#if GLFW_HAS_WAYLAND
     if (ImGui_ImplGlfw_IsWayland()) // We can't access our bd->IsWayland cache for a monitor.
         return 1.0f;
 #endif
@@ -1090,7 +1107,7 @@ static void ImGui_ImplGlfw_GetWindowSizeAndFramebufferScale(GLFWwindow* window, 
     glfwGetFramebufferSize(window, &display_w, &display_h);
     float fb_scale_x = (w > 0) ? (float)display_w / (float)w : 1.0f;
     float fb_scale_y = (h > 0) ? (float)display_h / (float)h : 1.0f;
-#if GLFW_HAS_X11_OR_WAYLAND
+#if GLFW_HAS_WAYLAND
     ImGui_ImplGlfw_Data* bd = ImGui_ImplGlfw_GetBackendData(window);
     if (!bd->IsWayland)
         fb_scale_x = fb_scale_y = 1.0f;
@@ -1347,7 +1364,7 @@ static void ImGui_ImplGlfw_DestroyWindow(ImGuiViewport* viewport)
 
             // Release any keys that were pressed in the window being destroyed and are still held down,
             // because we will not receive any release events after window is destroyed.
-            for (int i = 0; i < IM_ARRAYSIZE(bd->KeyOwnerWindows); i++)
+            for (int i = 0; i < IM_COUNTOF(bd->KeyOwnerWindows); i++)
                 if (bd->KeyOwnerWindows[i] == vd->Window)
                     ImGui_ImplGlfw_KeyCallback(vd->Window, i, 0, GLFW_RELEASE, 0); // Later params are only used for main viewport, on which this function is never called.
 
