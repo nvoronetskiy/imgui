@@ -197,7 +197,6 @@ struct ImGuiWindowSettings;         // Storage for a window .ini settings (we ke
 enum ImGuiLocKey : int;                 // -> enum ImGuiLocKey              // Enum: a localization entry for translation.
 typedef int ImGuiDataAuthority;         // -> enum ImGuiDataAuthority_      // Enum: for storing the source authority (dock node vs window) of a field
 typedef int ImGuiLayoutType;            // -> enum ImGuiLayoutType_         // Enum: Horizontal or vertical
-typedef int ImGuiLayoutItemType;        // -> enum ImGuiLayoutItemType_     // Enum: Item or Spring
 
 // Flags
 typedef int ImDrawTextFlags;            // -> enum ImDrawTextFlags_         // Flags: for ImTextCalcWordWrapPositionEx()
@@ -288,11 +287,9 @@ extern IMGUI_API ImGuiContext* GImGui;  // Current implicit context pointer
 #define IM_MEMALIGN(_OFF,_ALIGN)        (((_OFF) + ((_ALIGN) - 1)) & ~((_ALIGN) - 1))           // Memory align e.g. IM_ALIGN(0,4)=0, IM_ALIGN(1,4)=4, IM_ALIGN(4,4)=4, IM_ALIGN(5,4)=8
 #define IM_F32_TO_INT8_UNBOUND(_VAL)    ((int)((_VAL) * 255.0f + ((_VAL)>=0 ? 0.5f : -0.5f)))   // Unsaturated, for display purpose
 #define IM_F32_TO_INT8_SAT(_VAL)        ((int)(ImSaturate(_VAL) * 255.0f + 0.5f))               // Saturated, always output 0..255
-#define IM_TRUNC(_VAL)                  ((float)(int)(_VAL))                                    // ImTrunc() is not inlined in MSVC debug builds
-#define IM_ROUND(_VAL)                  ((float)(int)((_VAL) + 0.5f))                           //
-#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
-#define IM_FLOOR IM_TRUNC               // [OBSOLETE] Renamed in 1.90.0 (Sept 2023)
-#endif
+#define IM_TRUNC(_VAL)                  ((float)(int)(_VAL))                                    // Positive values only! ImTrunc() is not inlined in MSVC debug builds
+#define IM_ROUND(_VAL)                  ((float)(int)((_VAL) + 0.5f))                           // Positive values only! 
+//#define IM_FLOOR IM_TRUNC             // [OBSOLETE] Renamed in 1.90.0 (Sept 2023)
 
 // Hint for branch prediction
 #if (defined(__cplusplus) && (__cplusplus >= 202002L)) || (defined(_MSVC_LANG) && (_MSVC_LANG >= 202002L))
@@ -539,7 +536,7 @@ inline ImVec2 ImTrunc(const ImVec2& v)                                  { return
 inline float  ImFloor(float f)                                          { return (float)((f >= 0 || (float)(int)f == f) ? (int)f : (int)f - 1); } // Decent replacement for floorf()
 inline ImVec2 ImFloor(const ImVec2& v)                                  { return ImVec2(ImFloor(v.x), ImFloor(v.y)); }
 inline float  ImTrunc64(float f)                                        { return (float)(ImS64)(f); }
-inline float  ImRound64(float f)                                        { return (float)(ImS64)(f + 0.5f); }
+inline float  ImRound64(float f)                                        { return (float)(ImS64)(f + 0.5f); } // FIXME: Positive values only.
 inline int    ImModPositive(int a, int b)                               { return (a + b) % b; }
 inline float  ImDot(const ImVec2& a, const ImVec2& b)                   { return a.x * b.x + a.y * b.y; }
 inline ImVec2 ImRotate(const ImVec2& v, float cos_a, float sin_a)       { return ImVec2(v.x * cos_a - v.y * sin_a, v.x * sin_a + v.y * cos_a); }
@@ -623,7 +620,6 @@ struct IMGUI_API ImRect
     void        TranslateY(float dy)                { Min.y += dy; Max.y += dy; }
     void        ClipWith(const ImRect& r)           { Min = ImMax(Min, r.Min); Max = ImMin(Max, r.Max); }                   // Simple version, may lead to an inverted rectangle, which is fine for Contains/Overlaps test but not for display.
     void        ClipWithFull(const ImRect& r)       { Min = ImClamp(Min, r.Min, r.Max); Max = ImClamp(Max, r.Min, r.Max); } // Full version, ensure both points are fully clipped.
-    void        Floor()                             { Min.x = IM_TRUNC(Min.x); Min.y = IM_TRUNC(Min.y); Max.x = IM_TRUNC(Max.x); Max.y = IM_TRUNC(Max.y); }
     bool        IsInverted() const                  { return Min.x > Max.x || Min.y > Max.y; }
     ImVec4      ToVec4() const                      { return ImVec4(Min.x, Min.y, Max.x, Max.y); }
     const ImVec4& AsVec4() const                    { return *(const ImVec4*)&Min.x; }
@@ -1142,12 +1138,6 @@ enum ImGuiLayoutType_
     ImGuiLayoutType_Vertical = 1
 };
 
-enum ImGuiLayoutItemType_
-{
-    ImGuiLayoutItemType_Item,
-    ImGuiLayoutItemType_Spring
-};
-
 // Flags for LogBegin() text capturing function
 enum ImGuiLogFlags_
 {
@@ -1481,74 +1471,6 @@ struct ImGuiDeactivatedItemData
     int         ElapseFrame;
     bool        HasBeenEditedBefore;
     bool        IsAlive;
-};
-
-// sizeof() == 48
-struct ImGuiLayoutItem
-{
-    ImGuiLayoutItemType     Type;               // Type of an item
-    ImRect                  MeasuredBounds;
-
-    float                   SpringWeight;       // Weight of a spring
-    float                   SpringSpacing;      // Spring spacing
-    float                   SpringSize;         // Calculated spring size
-
-    float                   CurrentAlign;
-    float                   CurrentAlignOffset;
-
-    unsigned int            VertexIndexBegin;
-    unsigned int            VertexIndexEnd;
-
-    ImGuiLayoutItem(ImGuiLayoutItemType type)
-    {
-        Type = type;
-        MeasuredBounds = ImRect(0, 0, 0, 0);    // FIXME: @thedmd are you sure the default ImRect value FLT_MAX,FLT_MAX,-FLT_MAX,-FLT_MAX aren't enough here?
-        SpringWeight = 1.0f;
-        SpringSpacing = -1.0f;
-        SpringSize = 0.0f;
-        CurrentAlign = 0.0f;
-        CurrentAlignOffset = 0.0f;
-        VertexIndexBegin = VertexIndexEnd = (ImDrawIdx)0;
-    }
-};
-
-struct ImGuiLayout
-{
-    ImGuiID                     Id;
-    ImGuiLayoutType             Type;
-    bool                        Live;
-    ImVec2                      Size;               // Size passed to BeginLayout
-    ImVec2                      CurrentSize;        // Bounds of layout known at the beginning the frame.
-    ImVec2                      MinimumSize;        // Minimum possible size when springs are collapsed.
-    ImVec2                      MeasuredSize;       // Measured size with springs expanded.
-
-    ImVector<ImGuiLayoutItem>   Items;
-    int                         CurrentItemIndex;
-    int                         ParentItemIndex;
-    ImGuiLayout*                Parent;
-    ImGuiLayout*                FirstChild;
-    ImGuiLayout*                NextSibling;
-    float                       Align;              // Current item alignment.
-    float                       Indent;             // Indent used to align items in vertical layout.
-    ImVec2                      StartPos;           // Initial cursor position when BeginLayout is called.
-    ImVec2                      StartCursorMaxPos;  // Maximum cursor position when BeginLayout is called.
-
-    ImDrawListSplitter          Splitter;
-
-    ImGuiLayout(ImGuiID id, ImGuiLayoutType type)
-    {
-        Id = id;
-        Type = type;
-        Live = false;
-        Size = CurrentSize = MinimumSize = MeasuredSize = ImVec2(0, 0);
-        CurrentItemIndex = 0;
-        ParentItemIndex = 0;
-        Parent = FirstChild = NextSibling = NULL;
-        Align = -1.0f;
-        Indent = 0.0f;
-        StartPos = ImVec2(0, 0);
-        StartCursorMaxPos = ImVec2(0, 0);
-    }
 };
 
 //-----------------------------------------------------------------------------
@@ -2902,10 +2824,6 @@ struct IMGUI_API ImGuiWindowTempData
     int                     CurrentTableIdx;        // Current table index (into g.Tables)
     ImGuiLayoutType         LayoutType;
     ImGuiLayoutType         ParentLayoutType;       // Layout type of parent window at the time of Begin()
-    ImGuiLayout*            CurrentLayout;
-    ImGuiLayoutItem*        CurrentLayoutItem;
-    ImVector<ImGuiLayout*>  LayoutStack;
-    ImGuiStorage            Layouts;
     ImU32                   ModalDimBgColor;
 
     // Status flags
@@ -4163,7 +4081,7 @@ struct ImFontLoader
 IMGUI_API const ImFontLoader* ImFontAtlasGetFontLoaderForStbTruetype();
 #endif
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
-typedef ImFontLoader ImFontBuilderIO; // [renamed/changed in 1.92] The types are not actually compatible but we provide this as a compile-time error report helper.
+typedef ImFontLoader ImFontBuilderIO; // [renamed/changed in 1.92.0] The types are not actually compatible but we provide this as a compile-time error report helper.
 #endif
 
 //-----------------------------------------------------------------------------
