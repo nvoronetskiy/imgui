@@ -5413,7 +5413,7 @@ void ImGui::StopMouseMovingWindow()
         // Try to merge the window back into the main viewport.
         // This works because MouseViewport should be != MovingWindow->Viewport on release (as per code in UpdateViewports)
         if (g.ConfigFlagsCurrFrame & ImGuiConfigFlags_ViewportsEnable)
-            UpdateTryMergeWindowIntoHostViewport(window, g.MouseViewport);
+            UpdateTryMergeWindowIntoHostViewport(window->RootWindowDockTree, g.MouseViewport);
 
         // Restore the mouse viewport so that we don't hover the viewport _under_ the moved window during the frame we released the mouse button.
         if (!IsDragDropPayloadBeingAccepted())
@@ -7382,7 +7382,7 @@ static int ImGui::UpdateWindowManualResize(ImGuiWindow* window, int* border_hove
         if (nav_resize_dir.x != 0.0f || nav_resize_dir.y != 0.0f)
         {
             const float NAV_RESIZE_SPEED = 600.0f;
-            const float resize_step = NAV_RESIZE_SPEED * g.IO.DeltaTime * ImMin(g.IO.DisplayFramebufferScale.x, g.IO.DisplayFramebufferScale.y);
+            const float resize_step = NAV_RESIZE_SPEED * g.IO.DeltaTime * GetScale();
             g.NavWindowingAccumDeltaSize += nav_resize_dir * resize_step;
             g.NavWindowingAccumDeltaSize = ImMax(g.NavWindowingAccumDeltaSize, clamp_rect.Min - window->Pos - window->Size); // We need Pos+Size >= clmap_rect.Min, so Size >= clmap_rect.Min - Pos, so size_delta >= clmap_rect.Min - window->Pos - window->Size
             g.NavWindowingToggleLayer = false;
@@ -7531,15 +7531,26 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
                     bg_col = (bg_col & ~IM_COL32_A_MASK) | (IM_F32_TO_INT8_SAT(alpha) << IM_COL32_A_SHIFT);
             }
 
-            // Render, for docked windows and host windows we ensure bg goes before decorations
+            // Render, for docked windows and host windows we ensure BG goes before decorations
             if (window->DockIsActive)
                 window->DockNode->LastBgColor = bg_col;
-            ImDrawList* bg_draw_list = window->DockIsActive ? window->DockNode->HostWindow->DrawList : window->DrawList;
-            if (window->DockIsActive || (flags & ImGuiWindowFlags_DockNodeHost))
-                bg_draw_list->ChannelsSetCurrent(DOCKING_HOST_DRAW_CHANNEL_BG);
-            bg_draw_list->AddRectFilled(window->Pos + ImVec2(0, window->TitleBarHeight), window->Pos + window->Size, bg_col, window_rounding, (flags & ImGuiWindowFlags_NoTitleBar) ? 0 : ImDrawFlags_RoundCornersBottom);
-            if (window->DockIsActive || (flags & ImGuiWindowFlags_DockNodeHost))
-                bg_draw_list->ChannelsSetCurrent(DOCKING_HOST_DRAW_CHANNEL_FG);
+            if (flags & ImGuiWindowFlags_DockNodeHost)
+                bg_col = 0;
+            if (bg_col & IM_COL32_A_MASK)
+            {
+                ImRect bg_rect(window->Pos + ImVec2(0, window->TitleBarHeight), window->Pos + window->Size);
+                ImDrawFlags bg_rounding_flags;
+                if (window->DockIsActive)
+                    bg_rounding_flags = CalcRoundingFlagsForRectInRect(bg_rect, window->DockNode->HostWindow->Rect(), 0.0f);
+                else
+                    bg_rounding_flags = (flags & ImGuiWindowFlags_NoTitleBar) ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersBottom;
+                ImDrawList* bg_draw_list = window->DockIsActive ? window->DockNode->HostWindow->DrawList : window->DrawList;
+                if (window->DockIsActive)
+                    bg_draw_list->ChannelsSetCurrent(DOCKING_HOST_DRAW_CHANNEL_BG);
+                bg_draw_list->AddRectFilled(bg_rect.Min, bg_rect.Max, bg_col, window_rounding, bg_rounding_flags);
+                if (window->DockIsActive)
+                    bg_draw_list->ChannelsSetCurrent(DOCKING_HOST_DRAW_CHANNEL_FG);
+            }
         }
         if (window->DockIsActive)
             window->DockNode->IsBgDrawnThisFrame = true;
@@ -8260,10 +8271,12 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
 
         // Lock window rounding for the frame (so that altering them doesn't cause inconsistencies)
         // Large values tend to lead to variety of artifacts and are not recommended.
-        if (window->ViewportOwned || window->DockIsActive)
+        if ((flags & ImGuiWindowFlags_ChildWindow) && !window->DockIsActive)
+            window->WindowRounding = style.ChildRounding;
+        else if (window->RootWindowDockTree->ViewportOwned)
             window->WindowRounding = 0.0f;
         else
-            window->WindowRounding = (flags & ImGuiWindowFlags_ChildWindow) ? style.ChildRounding : ((flags & ImGuiWindowFlags_Popup) && !(flags & ImGuiWindowFlags_Modal)) ? style.PopupRounding : style.WindowRounding;
+            window->WindowRounding = ((flags & ImGuiWindowFlags_Popup) && !(flags & ImGuiWindowFlags_Modal)) ? style.PopupRounding : style.WindowRounding;
 
         // For windows with title bar or menu bar, we clamp to FrameHeight(FontSize + FramePadding.y * 2.0f) to completely hide artifacts.
         //if ((window->Flags & ImGuiWindowFlags_MenuBar) || !(window->Flags & ImGuiWindowFlags_NoTitleBar))
@@ -11198,6 +11211,8 @@ void ImGui::UpdateInputEvents(bool trickle_fast_inputs)
 #endif
 
     // Remaining events will be processed on the next frame
+    // FIXME-MULTITHREADING: io.AddKeyEvent() etc. calls are mostly thread-safe apart from the fact they push to this
+    // queue which may be resized here. Could potentially rework this to narrow down the section needing a mutex? (#5772)
     if (event_n == g.InputEventsQueue.Size)
         g.InputEventsQueue.resize(0);
     else
@@ -14363,6 +14378,7 @@ void ImGui::BringWindowToFocusFront(ImGuiWindow* window)
 }
 
 // Note technically focus related but rather adjacent and close to BringWindowToFocusFront()
+// FIXME-FOCUS: Could opt-in/opt-out enable modal check like in FocusWindow().
 void ImGui::BringWindowToDisplayFront(ImGuiWindow* window)
 {
     ImGuiContext& g = *GImGui;
@@ -16127,7 +16143,7 @@ static void ImGui::NavUpdateWindowing()
         if (nav_move_dir.x != 0.0f || nav_move_dir.y != 0.0f)
         {
             const float NAV_MOVE_SPEED = 800.0f;
-            const float move_step = NAV_MOVE_SPEED * io.DeltaTime * ImMin(io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+            const float move_step = NAV_MOVE_SPEED * io.DeltaTime * GetScale();
             g.NavWindowingAccumDeltaPos += nav_move_dir * move_step;
             g.NavHighlightItemUnderNav = true;
             ImVec2 accum_floored = ImTrunc(g.NavWindowingAccumDeltaPos);
@@ -16682,7 +16698,7 @@ void ImGui::LogRenderedText(const ImVec2* ref_pos, const char* text, const char*
     if (!text_end)
         text_end = FindRenderedTextEnd(text, text_end);
 
-    const bool log_new_line = ref_pos && (ref_pos->y > g.LogLinePosY + g.Style.FramePadding.y + 1);
+    const bool log_new_line = ref_pos && (ref_pos->y > g.LogLinePosY + ImMax(g.Style.FramePadding.y, g.Style.ItemSpacing.y) + 1);
     if (ref_pos)
         g.LogLinePosY = ref_pos->y;
     if (log_new_line)
@@ -17426,6 +17442,7 @@ static bool IsViewportAbove(ImGuiViewportP* potential_above, ImGuiViewportP* pot
 static bool ImGui::UpdateTryMergeWindowIntoHostViewport(ImGuiWindow* window, ImGuiViewportP* viewport_dst)
 {
     ImGuiContext& g = *GImGui;
+    IM_ASSERT(window == window->RootWindowDockTree);
     ImGuiViewportP* viewport_src = window->Viewport; // Current viewport
     if (viewport_src == viewport_dst)
         return false;
@@ -17449,6 +17466,7 @@ static bool ImGui::UpdateTryMergeWindowIntoHostViewport(ImGuiWindow* window, ImG
     }
 
     // Move to the existing viewport, Move child/hosted windows as well (FIXME-OPT: iterate child)
+    IMGUI_DEBUG_LOG_VIEWPORT("[viewport] Window '%s' merge into Viewport 0X%08X\n", window->Name, viewport_dst->ID);
     if (window->ViewportOwned)
         for (int n = 0; n < g.Windows.Size; n++)
             if (g.Windows[n]->Viewport == viewport_src)
