@@ -126,6 +126,9 @@
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
 #include "imgui_impl_opengl3.h"
+#ifdef IMGUI_IMPL_OPENGL3_SDF_GLOW
+#include "imgui_impl_opengl3_ext.h"
+#endif
 #include <stdio.h>
 #include <stdint.h>     // intptr_t
 #if defined(__APPLE__)
@@ -671,6 +674,14 @@ void    ImGui_ImplOpenGL3_RenderDrawData(ImDrawData* draw_data)
                 GL_CALL(glScissor((int)clip_min.x, (int)((float)fb_height - clip_max.y), (int)(clip_max.x - clip_min.x), (int)(clip_max.y - clip_min.y)));
 
                 // Bind texture, Draw
+#ifdef IMGUI_IMPL_OPENGL3_SDF_GLOW
+                ImTextureID tex_id = pcmd->GetTexID();
+                if (ImGui_ImplOpenGL3_Ext_IsSdfTexture(tex_id))
+                    ImGui_ImplOpenGL3_Ext_ApplySdfState(draw_data, fb_width, fb_height, (GLuint)bd->AttribLocationVtxPos, (GLuint)bd->AttribLocationVtxUV, (GLuint)bd->AttribLocationVtxColor);
+                else if (ImGui_ImplOpenGL3_Ext_IsGlowTexture(tex_id))
+                    ImGui_ImplOpenGL3_Ext_ApplyGlowState(draw_data, fb_width, fb_height, (GLuint)bd->AttribLocationVtxPos, (GLuint)bd->AttribLocationVtxUV, (GLuint)bd->AttribLocationVtxColor);
+                else
+#endif
                 GL_CALL(glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)pcmd->GetTexID()));
 #ifdef IMGUI_IMPL_OPENGL_MAY_HAVE_VTX_OFFSET
                 if (bd->GlVersion >= 320)
@@ -810,6 +821,14 @@ void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, unsigned int
                 GL_CALL(glScissor((int)clip_min.x, (int)((float)fb_height - clip_max.y), (int)(clip_max.x - clip_min.x), (int)(clip_max.y - clip_min.y)));
 
                 // Bind texture, Draw
+#ifdef IMGUI_IMPL_OPENGL3_SDF_GLOW
+                ImTextureID tex_id = pcmd->GetTexID();
+                if (ImGui_ImplOpenGL3_Ext_IsSdfTexture(tex_id))
+                    ImGui_ImplOpenGL3_Ext_ApplySdfState(draw_data, fb_width, fb_height, (GLuint)bd->AttribLocationVtxPos, (GLuint)bd->AttribLocationVtxUV, (GLuint)bd->AttribLocationVtxColor);
+                else if (ImGui_ImplOpenGL3_Ext_IsGlowTexture(tex_id))
+                    ImGui_ImplOpenGL3_Ext_ApplyGlowState(draw_data, fb_width, fb_height, (GLuint)bd->AttribLocationVtxPos, (GLuint)bd->AttribLocationVtxUV, (GLuint)bd->AttribLocationVtxColor);
+                else
+#endif
                 GL_CALL(glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)pcmd->GetTexID()));
 #ifdef IMGUI_IMPL_OPENGL_MAY_HAVE_VTX_OFFSET
                 if (bd->GlVersion >= 320)
