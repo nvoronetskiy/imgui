@@ -61,6 +61,8 @@ private:
         EffectHandle effectHandle = kInvalidEffectHandle;
         ImDrawList* drawList = nullptr;
         ImGuiID viewportId = 0;
+        ImVec2 contentClipMin{};
+        ImVec2 contentClipMax{};
         int idxStart = 0;
         int idxEnd = 0;
     };

@@ -483,6 +483,10 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
     ImGui_ImplOpenGL3Slang_InitLoader();
 
     ImGui_ImplOpenGL3Slang_Data* bd = ImGui_ImplOpenGL3Slang_GetBackendData();
+    // Reset per-context cached GL state before each viewport render call.
+    // Multi-viewport rendering can switch GL contexts between calls.
+    if (bd->GlAdapter)
+        bd->GlAdapter->ResetCache();
 
     // Catch up with texture updates
     if (draw_data->Textures != nullptr)
@@ -695,7 +699,6 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
                 GL_CALL(glDrawElements(GL_TRIANGLES, (GLsizei)packet.elemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, (void*)(intptr_t)(packet.idxOffset * sizeof(ImDrawIdx))));
         }
     }
-
     if (bd->GlAdapter)
     {
         const ImGuiRenderCore::GlAdapterStats& stats = bd->GlAdapter->GetStats();

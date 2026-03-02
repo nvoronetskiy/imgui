@@ -191,6 +191,11 @@ bool EffectSystem::BeginEffectWindow(const char* name, EffectHandle effectHandle
     cap.effectHandle = effectHandle;
     cap.drawList = drawList;
     cap.viewportId = viewport ? viewport->ID : 0;
+    const ImVec2 windowPos = ImGui::GetWindowPos();
+    const ImVec2 crMin = ImGui::GetWindowContentRegionMin();
+    const ImVec2 crMax = ImGui::GetWindowContentRegionMax();
+    cap.contentClipMin = ImVec2(windowPos.x + crMin.x, windowPos.y + crMin.y);
+    cap.contentClipMax = ImVec2(windowPos.x + crMax.x, windowPos.y + crMax.y);
     // Capture by index-buffer range because ImGui may append to an existing ImDrawCmd
     // instead of creating a new command object.
     cap.idxStart = drawList ? drawList->IdxBuffer.Size : 0;
@@ -219,6 +224,7 @@ void EffectSystem::EndEffectWindow()
 
 void EffectSystem::SubmitQueuedEffects()
 {
+    const ImTextureID fontTexId = ImGui::GetIO().Fonts ? ImGui::GetIO().Fonts->TexID.GetTexID() : ImTextureID_Invalid;
     for (const WindowCapture& cap : m_queuedCaptures)
     {
         const EffectMeta* meta = FindEffect(cap.effectHandle);
@@ -248,12 +254,20 @@ void EffectSystem::SubmitQueuedEffects()
             const ImTextureID texId = cmd->TexRef._TexData ? cmd->TexRef._TexData->TexID : cmd->TexRef._TexID;
             if (texId == ImTextureID_Invalid)
                 continue;
+            if (fontTexId != ImTextureID_Invalid && texId == fontTexId)
+                continue; // Never post-process font atlas draws: prevents title/content font corruption.
 
             ImGuiRenderCore::DrawPacket packet;
             packet.pipelineKey = meta->pipelineKey;
             packet.texture = texId;
-            packet.viewportId = 0; // route custom packets by current draw-list membership, not transient viewport migration
-            packet.clipRect = cmd->ClipRect;
+            packet.viewportId = cap.viewportId; // route custom packets to originating viewport only
+            // Clamp clip rect to effect window content region so custom pass never touches title/menu text.
+            packet.clipRect.x = (cmd->ClipRect.x > cap.contentClipMin.x) ? cmd->ClipRect.x : cap.contentClipMin.x;
+            packet.clipRect.y = (cmd->ClipRect.y > cap.contentClipMin.y) ? cmd->ClipRect.y : cap.contentClipMin.y;
+            packet.clipRect.z = (cmd->ClipRect.z < cap.contentClipMax.x) ? cmd->ClipRect.z : cap.contentClipMax.x;
+            packet.clipRect.w = (cmd->ClipRect.w < cap.contentClipMax.y) ? cmd->ClipRect.w : cap.contentClipMax.y;
+            if (packet.clipRect.z <= packet.clipRect.x || packet.clipRect.w <= packet.clipRect.y)
+                continue;
             packet.elemCount = overlapEnd - overlapStart;
             packet.idxOffset = overlapStart;
             packet.vtxOffset = (int)cmd->VtxOffset;
