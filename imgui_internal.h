@@ -198,6 +198,7 @@ struct ImGuiWindowSettings;         // Storage for a window .ini settings (we ke
 enum ImGuiLocKey : int;                 // -> enum ImGuiLocKey              // Enum: a localization entry for translation.
 typedef int ImGuiDataAuthority;         // -> enum ImGuiDataAuthority_      // Enum: for storing the source authority (dock node vs window) of a field
 typedef int ImGuiLayoutType;            // -> enum ImGuiLayoutType_         // Enum: Horizontal or vertical
+typedef int ImGuiLayoutItemType;        // -> enum ImGuiLayoutItemType_     // Enum: Item or Spring
 
 // Flags
 typedef int ImDrawTextFlags;            // -> enum ImDrawTextFlags_         // Flags: for ImTextCalcWordWrapPositionEx()
@@ -621,6 +622,7 @@ struct IMGUI_API ImRect
     void        TranslateY(float dy)                { Min.y += dy; Max.y += dy; }
     void        ClipWith(const ImRect& r)           { Min = ImMax(Min, r.Min); Max = ImMin(Max, r.Max); }                   // Simple version, may lead to an inverted rectangle, which is fine for Contains/Overlaps test but not for display.
     void        ClipWithFull(const ImRect& r)       { Min = ImClamp(Min, r.Min, r.Max); Max = ImClamp(Max, r.Min, r.Max); } // Full version, ensure both points are fully clipped.
+    void        Floor()                             { Min.x = IM_TRUNC(Min.x); Min.y = IM_TRUNC(Min.y); Max.x = IM_TRUNC(Max.x); Max.y = IM_TRUNC(Max.y); }
     bool        IsInverted() const                  { return Min.x > Max.x || Min.y > Max.y; }
     ImVec4      ToVec4() const                      { return ImVec4(Min.x, Min.y, Max.x, Max.y); }
     const ImVec4& AsVec4() const                    { return *(const ImVec4*)&Min.x; }
@@ -1139,6 +1141,12 @@ enum ImGuiLayoutType_
     ImGuiLayoutType_Vertical = 1
 };
 
+enum ImGuiLayoutItemType_
+{
+    ImGuiLayoutItemType_Item,
+    ImGuiLayoutItemType_Spring
+};
+
 // Flags for LogBegin() text capturing function
 enum ImGuiLogFlags_
 {
@@ -1245,7 +1253,7 @@ struct IMGUI_API ImGuiInputTextState
     ImGuiInputTextFlags     Flags;                  // copy of InputText() flags. may be used to check if e.g. ImGuiInputTextFlags_Password is set.
     ImGuiID                 ID;                     // widget id owning the text state
     int                     TextLen;                // UTF-8 length of the string in TextA (in bytes)
-    const char*             TextSrc;                // == TextA.Data unless read-only, in which case == buf passed to InputText(). For _ReadOnly fields, pointer will be null outside the InputText() call.
+    const char*             TextSrc;                // == TextA.Data unless read-only, in which case == buf passed to InputText(). Field only set and valid _inside_ the call InputText() call.
     ImVector<char>          TextA;                  // main UTF8 buffer. TextA.Size is a buffer size! Should always be >= buf_size passed by user (and of course >= CurLenA + 1).
     ImVector<char>          TextToRevertTo;         // value to revert to when pressing Escape = backup of end-user buffer at the time of focus (in UTF-8, unaltered)
     ImVector<char>          CallbackTextBackup;     // temporary storage for callback to support automatic reconcile of undo-stack
@@ -1279,7 +1287,6 @@ struct IMGUI_API ImGuiInputTextState
     int         GetCursorPos() const;
     int         GetSelectionStart() const;
     int         GetSelectionEnd() const;
-    void        SetSelection(int start, int end);
     void        SelectAll();
 
     // Reload user buf (WIP #2890)
@@ -1473,6 +1480,74 @@ struct ImGuiDeactivatedItemData
     int         ElapseFrame;
     bool        HasBeenEditedBefore;
     bool        IsAlive;
+};
+
+// sizeof() == 48
+struct ImGuiLayoutItem
+{
+    ImGuiLayoutItemType     Type;               // Type of an item
+    ImRect                  MeasuredBounds;
+
+    float                   SpringWeight;       // Weight of a spring
+    float                   SpringSpacing;      // Spring spacing
+    float                   SpringSize;         // Calculated spring size
+
+    float                   CurrentAlign;
+    float                   CurrentAlignOffset;
+
+    unsigned int            VertexIndexBegin;
+    unsigned int            VertexIndexEnd;
+
+    ImGuiLayoutItem(ImGuiLayoutItemType type)
+    {
+        Type = type;
+        MeasuredBounds = ImRect(0, 0, 0, 0);    // FIXME: @thedmd are you sure the default ImRect value FLT_MAX,FLT_MAX,-FLT_MAX,-FLT_MAX aren't enough here?
+        SpringWeight = 1.0f;
+        SpringSpacing = -1.0f;
+        SpringSize = 0.0f;
+        CurrentAlign = 0.0f;
+        CurrentAlignOffset = 0.0f;
+        VertexIndexBegin = VertexIndexEnd = (ImDrawIdx)0;
+    }
+};
+
+struct ImGuiLayout
+{
+    ImGuiID                     Id;
+    ImGuiLayoutType             Type;
+    bool                        Live;
+    ImVec2                      Size;               // Size passed to BeginLayout
+    ImVec2                      CurrentSize;        // Bounds of layout known at the beginning the frame.
+    ImVec2                      MinimumSize;        // Minimum possible size when springs are collapsed.
+    ImVec2                      MeasuredSize;       // Measured size with springs expanded.
+
+    ImVector<ImGuiLayoutItem>   Items;
+    int                         CurrentItemIndex;
+    int                         ParentItemIndex;
+    ImGuiLayout*                Parent;
+    ImGuiLayout*                FirstChild;
+    ImGuiLayout*                NextSibling;
+    float                       Align;              // Current item alignment.
+    float                       Indent;             // Indent used to align items in vertical layout.
+    ImVec2                      StartPos;           // Initial cursor position when BeginLayout is called.
+    ImVec2                      StartCursorMaxPos;  // Maximum cursor position when BeginLayout is called.
+
+    ImDrawListSplitter          Splitter;
+
+    ImGuiLayout(ImGuiID id, ImGuiLayoutType type)
+    {
+        Id = id;
+        Type = type;
+        Live = false;
+        Size = CurrentSize = MinimumSize = MeasuredSize = ImVec2(0, 0);
+        CurrentItemIndex = 0;
+        ParentItemIndex = 0;
+        Parent = FirstChild = NextSibling = NULL;
+        Align = -1.0f;
+        Indent = 0.0f;
+        StartPos = ImVec2(0, 0);
+        StartCursorMaxPos = ImVec2(0, 0);
+    }
 };
 
 //-----------------------------------------------------------------------------
@@ -2251,9 +2326,7 @@ struct ImGuiLocEntry
 // - See 'Demo->Configuration->Error Handling' and ImGuiIO definitions for details on error handling.
 // - Read https://github.com/ocornut/imgui/wiki/Error-Handling for details on error handling.
 #ifndef IM_ASSERT_USER_ERROR
-#define IM_ASSERT_USER_ERROR(_EXPR,_MSG)            do { if (!(_EXPR)) { if (ImGui::ErrorLog(_MSG)) { IM_ASSERT((_EXPR) && _MSG); } } } while (0)               // Recoverable User Error
-#define IM_ASSERT_USER_ERROR_RET(_EXPR,_MSG)        do { if (!(_EXPR)) { if (ImGui::ErrorLog(_MSG)) { IM_ASSERT((_EXPR) && _MSG); } return; } } while (0)       // Recoverable User Error
-#define IM_ASSERT_USER_ERROR_RETV(_EXPR,_RETV,_MSG) do { if (!(_EXPR)) { if (ImGui::ErrorLog(_MSG)) { IM_ASSERT((_EXPR) && _MSG); } return _RETV; } } while (0) // Recoverable User Error
+#define IM_ASSERT_USER_ERROR(_EXPR,_MSG)    do { if (!(_EXPR) && ImGui::ErrorLog(_MSG)) { IM_ASSERT((_EXPR) && _MSG); } } while (0)    // Recoverable User Error
 #endif
 
 // The error callback is currently not public, as it is expected that only advanced users will rely on it.
@@ -2838,6 +2911,10 @@ struct IMGUI_API ImGuiWindowTempData
     int                     CurrentTableIdx;        // Current table index (into g.Tables)
     ImGuiLayoutType         LayoutType;
     ImGuiLayoutType         ParentLayoutType;       // Layout type of parent window at the time of Begin()
+    ImGuiLayout*            CurrentLayout;
+    ImGuiLayoutItem*        CurrentLayoutItem;
+    ImVector<ImGuiLayout*>  LayoutStack;
+    ImGuiStorage            Layouts;
     ImU32                   ModalDimBgColor;
 
     // Status flags
@@ -2849,7 +2926,6 @@ struct IMGUI_API ImGuiWindowTempData
     // Local parameters stacks
     // We store the current settings outside of the vectors to increase memory locality (reduce cache misses). The vectors are rarely modified. Also it allows us to not heap allocate for short-lived windows which are not using those settings.
     float                   ItemWidth;              // Current item width (>0.0: width in pixels, <0.0: align xx pixels to the right of window).
-    float                   ItemWidthDefault;
     float                   TextWrapPos;            // Current text wrap pos.
     ImVector<float>         ItemWidthStack;         // Store item widths to restore (attention: .back() is not == ItemWidth)
     ImVector<float>         TextWrapPosStack;       // Store text wrap pos to restore (attention: .back() is not == TextWrapPos)
@@ -2948,6 +3024,7 @@ struct IMGUI_API ImGuiWindow
     int                     LastFrameActive;                    // Last frame number the window was Active.
     int                     LastFrameJustFocused;               // Last frame number the window was made Focused.
     float                   LastTimeActive;                     // Last timestamp the window was Active (using float as we don't need high precision there)
+    float                   ItemWidthDefault;
     ImGuiStorage            StateStorage;
     ImVector<ImGuiOldColumns> ColumnsStorage;
     float                   FontWindowScale;                    // User scale multiplier per-window, via SetWindowFontScale()

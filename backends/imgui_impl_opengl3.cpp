@@ -43,7 +43,7 @@
 //  2023-05-09: OpenGL: Support for glBindSampler() backup/restore on ES3. (#6375)
 //  2023-04-18: OpenGL: Restore front and back polygon mode separately when supported by context. (#6333)
 //  2023-03-23: OpenGL: Properly restoring "no shader program bound" if it was the case prior to running the rendering function. (#6267, #6220, #6224)
-//  2023-03-15: OpenGL: Fixed GL loader crash when GL_VERSION returns nullptr. (#6154, #4445, #3530)
+//  2023-03-15: OpenGL: Fixed GL loader crash when GL_VERSION returns NULL. (#6154, #4445, #3530)
 //  2023-03-06: OpenGL: Fixed restoration of a potentially deleted OpenGL program, by calling glIsProgram(). (#6220, #6224)
 //  2022-11-09: OpenGL: Reverted use of glBufferSubData(), too many corruptions issues + old issues seemingly can't be reproed with Intel drivers nowadays (revert 2021-12-15 and 2022-05-23 changes).
 //  2022-10-11: Using 'nullptr' instead of 'NULL' as per our switch to C++11.
@@ -126,6 +126,9 @@
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
 #include "imgui_impl_opengl3.h"
+#ifdef IMGUI_IMPL_OPENGL3_SDF_GLOW
+#include "imgui_impl_opengl3_ext.h"
+#endif
 #include <stdio.h>
 #include <stdint.h>     // intptr_t
 #if defined(__APPLE__)
@@ -671,6 +674,14 @@ void    ImGui_ImplOpenGL3_RenderDrawData(ImDrawData* draw_data)
                 GL_CALL(glScissor((int)clip_min.x, (int)((float)fb_height - clip_max.y), (int)(clip_max.x - clip_min.x), (int)(clip_max.y - clip_min.y)));
 
                 // Bind texture, Draw
+#ifdef IMGUI_IMPL_OPENGL3_SDF_GLOW
+                ImTextureID tex_id = pcmd->GetTexID();
+                if (ImGui_ImplOpenGL3_Ext_IsSdfTexture(tex_id))
+                    ImGui_ImplOpenGL3_Ext_ApplySdfState(draw_data, fb_width, fb_height, (GLuint)bd->AttribLocationVtxPos, (GLuint)bd->AttribLocationVtxUV, (GLuint)bd->AttribLocationVtxColor);
+                else if (ImGui_ImplOpenGL3_Ext_IsGlowTexture(tex_id))
+                    ImGui_ImplOpenGL3_Ext_ApplyGlowState(draw_data, fb_width, fb_height, (GLuint)bd->AttribLocationVtxPos, (GLuint)bd->AttribLocationVtxUV, (GLuint)bd->AttribLocationVtxColor);
+                else
+#endif
                 GL_CALL(glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)pcmd->GetTexID()));
 #ifdef IMGUI_IMPL_OPENGL_MAY_HAVE_VTX_OFFSET
                 if (bd->GlVersion >= 320)
@@ -725,6 +736,109 @@ void    ImGui_ImplOpenGL3_RenderDrawData(ImDrawData* draw_data)
     glViewport(last_viewport[0], last_viewport[1], (GLsizei)last_viewport[2], (GLsizei)last_viewport[3]);
     glScissor(last_scissor_box[0], last_scissor_box[1], (GLsizei)last_scissor_box[2], (GLsizei)last_scissor_box[3]);
     (void)bd; // Not all compilation paths use this
+}
+
+void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, unsigned int vertex_array_object)
+{
+    // Avoid rendering when minimized, scale coordinates for retina displays (screen coordinates != framebuffer coordinates)
+    int fb_width = (int)(draw_data->DisplaySize.x * draw_data->FramebufferScale.x);
+    int fb_height = (int)(draw_data->DisplaySize.y * draw_data->FramebufferScale.y);
+    if (fb_width <= 0 || fb_height <= 0)
+        return;
+
+    ImGui_ImplOpenGL3_InitLoader(); // Lazily init loader if not already done for e.g. DLL boundaries.
+
+    ImGui_ImplOpenGL3_Data* bd = ImGui_ImplOpenGL3_GetBackendData();
+
+    // Catch up with texture updates. Most of the times, the list will have 1 element with an OK status, aka nothing to do.
+    // (This almost always points to ImGui::GetPlatformIO().Textures[] but is part of ImDrawData to allow overriding or disabling texture updates).
+    if (draw_data->Textures != nullptr)
+        for (ImTextureData* tex : *draw_data->Textures)
+            if (tex->Status != ImTextureStatus_OK)
+                ImGui_ImplOpenGL3_UpdateTexture(tex);
+
+    ImGui_ImplOpenGL3_SetupRenderState(draw_data, fb_width, fb_height, vertex_array_object);
+
+    // Will project scissor/clipping rectangles into framebuffer space
+    ImVec2 clip_off = draw_data->DisplayPos;         // (0,0) unless using multi-viewports
+    ImVec2 clip_scale = draw_data->FramebufferScale; // (1,1) unless using retina display which are often (2,2)
+
+    // Render command lists
+    for (const ImDrawList* draw_list : draw_data->CmdLists)
+    {
+        // Upload vertex/index buffers
+        // - OpenGL drivers are in a very sorry state nowadays....
+        //   During 2021 we attempted to switch from glBufferData() to orphaning+glBufferSubData() following reports
+        //   of leaks on Intel GPU when using multi-viewports on Windows.
+        // - After this we kept hearing of various display corruptions issues. We started disabling on non-Intel GPU, but issues still got reported on Intel.
+        // - We are now back to using exclusively glBufferData(). So bd->UseBufferSubData IS ALWAYS FALSE in this code.
+        //   We are keeping the old code path for a while in case people finding new issues may want to test the bd->UseBufferSubData path.
+        // - See https://github.com/ocornut/imgui/issues/4468 and please report any corruption issues.
+        const GLsizeiptr vtx_buffer_size = (GLsizeiptr)draw_list->VtxBuffer.Size * (int)sizeof(ImDrawVert);
+        const GLsizeiptr idx_buffer_size = (GLsizeiptr)draw_list->IdxBuffer.Size * (int)sizeof(ImDrawIdx);
+        if (bd->UseBufferSubData)
+        {
+            if (bd->VertexBufferSize < vtx_buffer_size)
+            {
+                bd->VertexBufferSize = vtx_buffer_size;
+                GL_CALL(glBufferData(GL_ARRAY_BUFFER, bd->VertexBufferSize, nullptr, GL_STREAM_DRAW));
+            }
+            if (bd->IndexBufferSize < idx_buffer_size)
+            {
+                bd->IndexBufferSize = idx_buffer_size;
+                GL_CALL(glBufferData(GL_ELEMENT_ARRAY_BUFFER, bd->IndexBufferSize, nullptr, GL_STREAM_DRAW));
+            }
+            GL_CALL(glBufferSubData(GL_ARRAY_BUFFER, 0, vtx_buffer_size, (const GLvoid*)draw_list->VtxBuffer.Data));
+            GL_CALL(glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, idx_buffer_size, (const GLvoid*)draw_list->IdxBuffer.Data));
+        }
+        else
+        {
+            GL_CALL(glBufferData(GL_ARRAY_BUFFER, vtx_buffer_size, (const GLvoid*)draw_list->VtxBuffer.Data, GL_STREAM_DRAW));
+            GL_CALL(glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx_buffer_size, (const GLvoid*)draw_list->IdxBuffer.Data, GL_STREAM_DRAW));
+        }
+
+        for (int cmd_i = 0; cmd_i < draw_list->CmdBuffer.Size; cmd_i++)
+        {
+            const ImDrawCmd* pcmd = &draw_list->CmdBuffer[cmd_i];
+            if (pcmd->UserCallback != nullptr)
+            {
+                // User callback, registered via ImDrawList::AddCallback()
+                // (ImDrawCallback_ResetRenderState is a special callback value used by the user to request the renderer to reset render state.)
+                if (pcmd->UserCallback == ImDrawCallback_ResetRenderState)
+                    ImGui_ImplOpenGL3_SetupRenderState(draw_data, fb_width, fb_height, vertex_array_object);
+                else
+                    pcmd->UserCallback(draw_list, pcmd);
+            }
+            else
+            {
+                // Project scissor/clipping rectangles into framebuffer space
+                ImVec2 clip_min((pcmd->ClipRect.x - clip_off.x) * clip_scale.x, (pcmd->ClipRect.y - clip_off.y) * clip_scale.y);
+                ImVec2 clip_max((pcmd->ClipRect.z - clip_off.x) * clip_scale.x, (pcmd->ClipRect.w - clip_off.y) * clip_scale.y);
+                if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y)
+                    continue;
+
+                // Apply scissor/clipping rectangle (Y is inverted in OpenGL)
+                GL_CALL(glScissor((int)clip_min.x, (int)((float)fb_height - clip_max.y), (int)(clip_max.x - clip_min.x), (int)(clip_max.y - clip_min.y)));
+
+                // Bind texture, Draw
+#ifdef IMGUI_IMPL_OPENGL3_SDF_GLOW
+                ImTextureID tex_id = pcmd->GetTexID();
+                if (ImGui_ImplOpenGL3_Ext_IsSdfTexture(tex_id))
+                    ImGui_ImplOpenGL3_Ext_ApplySdfState(draw_data, fb_width, fb_height, (GLuint)bd->AttribLocationVtxPos, (GLuint)bd->AttribLocationVtxUV, (GLuint)bd->AttribLocationVtxColor);
+                else if (ImGui_ImplOpenGL3_Ext_IsGlowTexture(tex_id))
+                    ImGui_ImplOpenGL3_Ext_ApplyGlowState(draw_data, fb_width, fb_height, (GLuint)bd->AttribLocationVtxPos, (GLuint)bd->AttribLocationVtxUV, (GLuint)bd->AttribLocationVtxColor);
+                else
+#endif
+                GL_CALL(glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)pcmd->GetTexID()));
+#ifdef IMGUI_IMPL_OPENGL_MAY_HAVE_VTX_OFFSET
+                if (bd->GlVersion >= 320)
+                    GL_CALL(glDrawElementsBaseVertex(GL_TRIANGLES, (GLsizei)pcmd->ElemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, (void*)(intptr_t)(pcmd->IdxOffset * sizeof(ImDrawIdx)), (GLint)pcmd->VtxOffset));
+                else
+#endif
+                GL_CALL(glDrawElements(GL_TRIANGLES, (GLsizei)pcmd->ElemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, (void*)(intptr_t)(pcmd->IdxOffset * sizeof(ImDrawIdx))));
+            }
+        }
+    }
 }
 
 static void ImGui_ImplOpenGL3_DestroyTexture(ImTextureData* tex)
