@@ -1,3 +1,8 @@
+// Ensure GL types are available when this TU is built (e.g. by vcpkg) without
+// IMGUI_IMPL_OPENGL_LOADER_CUSTOM from the build system.
+#ifndef IMGUI_IMPL_OPENGL_LOADER_CUSTOM
+#define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
+#endif
 #include "imgui_gl_adapter.h"
 
 namespace ImGuiRenderCore
