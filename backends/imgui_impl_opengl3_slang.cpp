@@ -204,8 +204,14 @@ struct ImGui_ImplOpenGL3Slang_VtxAttribState
 bool ImGui_ImplOpenGL3Slang_InitLoader();
 bool ImGui_ImplOpenGL3Slang_InitLoader()
 {
-    // With IMGUI_IMPL_OPENGL_LOADER_CUSTOM, gl3w is assumed already initialized
-#ifdef IMGUI_IMPL_OPENGL_LOADER_IMGL3W
+#ifdef IMGUI_IMPL_OPENGL_LOADER_CUSTOM
+    // gl3w: load OpenGL function pointers. Call after the GL context is current.
+    if (gl3wInit() != 0)
+    {
+        fprintf(stderr, "Failed to initialize OpenGL loader (gl3w). Ensure the GL context is current before ImGui_ImplOpenGL3Slang_Init().\n");
+        return false;
+    }
+#elif defined(IMGUI_IMPL_OPENGL_LOADER_IMGL3W)
     if (glGetIntegerv == nullptr && imgl3wInit() != 0)
     {
         fprintf(stderr, "Failed to initialize OpenGL loader!\n");
