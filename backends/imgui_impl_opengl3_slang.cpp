@@ -1181,10 +1181,6 @@ bool ImGui_ImplOpenGL3Slang_RegisterShaderProgram(const ImGuiRenderCore::ShaderD
         return false;
     }
 
-    auto existing = g_ShaderPrograms.find(shaderDesc.shaderKey);
-    if (existing != g_ShaderPrograms.end() && existing->second.program != 0)
-        glDeleteProgram(existing->second.program);
-
     ShaderProgramState state;
     if (!CreateProgramFromGLSL(compiled->vertexGLSL.c_str(), compiled->fragmentGLSL.c_str(), &state))
     {
@@ -1192,6 +1188,10 @@ bool ImGui_ImplOpenGL3Slang_RegisterShaderProgram(const ImGuiRenderCore::ShaderD
         if (errorText) *errorText = g_LastErrorText.c_str();
         return false;
     }
+
+    auto existing = g_ShaderPrograms.find(shaderDesc.shaderKey);
+    if (existing != g_ShaderPrograms.end() && existing->second.program != 0)
+        glDeleteProgram(existing->second.program);
     g_ShaderPrograms[shaderDesc.shaderKey] = state;
     g_Shaders[shaderDesc.shaderKey] = shaderDesc;
     if (errorText) *errorText = nullptr;

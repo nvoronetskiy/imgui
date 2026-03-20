@@ -6,6 +6,7 @@
 #endif
 #include <GL/gl3w.h>
 
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -20,19 +21,41 @@ long long FileTimeToTick(const std::filesystem::file_time_type& ft)
 {
     return (long long)ft.time_since_epoch().count();
 }
+
+static const EffectTextureGLProcs* g_customTextureProcs = nullptr;
+
+static const EffectTextureGLProcs& ActiveTextureProcs()
+{
+    static const EffectTextureGLProcs kDefaultGl3w = {
+        [](int n, unsigned* textures) { glGenTextures((GLsizei)n, (GLuint*)textures); },
+        [](int n, const unsigned* textures) { glDeleteTextures((GLsizei)n, (const GLuint*)textures); },
+        [](unsigned target, unsigned texture) { glBindTexture((GLenum)target, (GLuint)texture); },
+        [](unsigned target, unsigned pname, int param) { glTexParameteri((GLenum)target, (GLenum)pname, param); },
+        [](unsigned target, int level, int internalformat, int width, int height, int border, unsigned format, unsigned type, const void* pixels) {
+            glTexImage2D((GLenum)target, level, internalformat, width, height, border, (GLenum)format, (GLenum)type, pixels);
+        },
+    };
+    return g_customTextureProcs ? *g_customTextureProcs : kDefaultGl3w;
+}
 } // namespace
+
+void BuiltinGpuTextures::SetTextureProcs(const EffectTextureGLProcs* procs)
+{
+    g_customTextureProcs = procs;
+}
 
 void BuiltinGpuTextures::EnsureWhite1x1()
 {
     if (m_glTex != 0)
         return;
+    const EffectTextureGLProcs& gl = ActiveTextureProcs();
     unsigned char white[] = { 255, 255, 255, 255 };
-    glGenTextures(1, &m_glTex);
-    glBindTexture(GL_TEXTURE_2D, m_glTex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    gl.GenTextures(1, &m_glTex);
+    gl.BindTexture(GL_TEXTURE_2D, m_glTex);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+    gl.BindTexture(GL_TEXTURE_2D, 0);
     m_whiteImgui = (ImTextureID)(intptr_t)m_glTex;
 }
 
@@ -40,7 +63,8 @@ void BuiltinGpuTextures::Destroy()
 {
     if (m_glTex != 0)
     {
-        glDeleteTextures(1, &m_glTex);
+        const EffectTextureGLProcs& gl = ActiveTextureProcs();
+        gl.DeleteTextures(1, &m_glTex);
         m_glTex = 0;
         m_whiteImgui = ImTextureID{};
     }
@@ -54,6 +78,49 @@ bool EffectSystem::ReadTextFile(const std::string& path, std::string& outText)
     std::ostringstream ss;
     ss << ifs.rdbuf();
     outText = ss.str();
+    return true;
+}
+
+bool EffectSystem::LoadShaderFileIntoDesc(EffectCreateDesc& ioDesc, std::string* errorText)
+{
+    if (!ioDesc.shaderSource.empty() || ioDesc.shaderFile.empty())
+        return true;
+
+    namespace fs = std::filesystem;
+    std::vector<fs::path> candidates;
+    const fs::path rawPath(ioDesc.shaderFile);
+    candidates.push_back(rawPath);
+    if (rawPath.is_relative())
+    {
+        const fs::path cwd = fs::current_path();
+        candidates.push_back(cwd / rawPath);
+        candidates.push_back(cwd / ".." / rawPath);
+        candidates.push_back(cwd / ".." / ".." / rawPath);
+        candidates.push_back(cwd / ".." / ".." / ".." / rawPath);
+    }
+
+    bool loaded = false;
+    std::string loadedFrom;
+    for (const fs::path& p : candidates)
+    {
+        std::error_code ec;
+        const fs::path normalized = fs::weakly_canonical(p, ec);
+        const std::string tryPath = ec ? p.string() : normalized.string();
+        if (ReadTextFile(tryPath, ioDesc.shaderSource))
+        {
+            loaded = true;
+            loadedFrom = tryPath;
+            break;
+        }
+    }
+
+    if (!loaded)
+    {
+        if (errorText)
+            *errorText = "Failed to read shader file: " + ioDesc.shaderFile + " (cwd: " + fs::current_path().string() + ")";
+        return false;
+    }
+    ioDesc.shaderFile = loadedFrom;
     return true;
 }
 
@@ -112,6 +179,19 @@ long long EffectSystem::QueryFileMtimeTicks(const std::string& path)
     return FileTimeToTick(ft);
 }
 
+void EffectSystem::FrameContractTrace(const char* message) const
+{
+    if (!m_frameContractTracing || !message)
+        return;
+    std::fprintf(stderr, "[ImGuiRenderUX::EffectSystem] %s\n", message);
+}
+
+void EffectSystem::TouchUiPhaseForCaptures()
+{
+    if (m_framePhase == EffectFramePhase::AfterImGuiNewFrame || m_framePhase == EffectFramePhase::UiCapturing)
+        m_framePhase = EffectFramePhase::UiCapturing;
+}
+
 bool EffectSystem::Initialize()
 {
     if (m_initialized)
@@ -127,18 +207,24 @@ bool EffectSystem::Initialize()
 
 EffectSystem::EffectMeta* EffectSystem::FindEffect(EffectHandle handle)
 {
-    auto it = m_effects.find(handle);
+    if (!handle.IsValid())
+        return nullptr;
+    auto it = m_effects.find(handle.id);
     if (it == m_effects.end())
+        return nullptr;
+    if (it->second.generation != handle.generation)
         return nullptr;
     return &it->second;
 }
 
 const EffectSystem::EffectMeta* EffectSystem::FindEffect(EffectHandle handle) const
 {
-    auto it = m_effects.find(handle);
-    if (it == m_effects.end())
-        return nullptr;
-    return &it->second;
+    return const_cast<EffectSystem*>(this)->FindEffect(handle);
+}
+
+bool EffectSystem::IsEffectHandleLive(EffectHandle handle) const
+{
+    return FindEffect(handle) != nullptr;
 }
 
 EffectHandle EffectSystem::FindEffectByName(const std::string& name) const
@@ -146,14 +232,17 @@ EffectHandle EffectSystem::FindEffectByName(const std::string& name) const
     auto it = m_effectsByName.find(name);
     if (it == m_effectsByName.end())
         return kInvalidEffectHandle;
-    return it->second;
+    auto mit = m_effects.find(it->second);
+    if (mit == m_effects.end())
+        return kInvalidEffectHandle;
+    return EffectHandle{mit->second.id, mit->second.generation};
 }
 
-void EffectSystem::RegisterEffectName(const std::string& lookupName, EffectHandle handle)
+void EffectSystem::RegisterEffectName(const std::string& lookupName, uint32_t id)
 {
     if (lookupName.empty())
         return;
-    m_effectsByName[lookupName] = handle;
+    m_effectsByName[lookupName] = id;
 }
 
 void EffectSystem::UnregisterEffectName(const std::string& lookupName)
@@ -169,7 +258,12 @@ EffectHandle EffectSystem::EnsureEffect(const EffectCreateDesc& desc, std::strin
     {
         auto it = m_effectsByName.find(desc.name);
         if (it != m_effectsByName.end())
-            return it->second;
+        {
+            auto mit = m_effects.find(it->second);
+            if (mit != m_effects.end())
+                return EffectHandle{mit->second.id, mit->second.generation};
+            m_effectsByName.erase(it);
+        }
     }
     return CreateEffect(desc, errorText);
 }
@@ -188,48 +282,16 @@ void EffectSystem::UpdateShaderMtimeForMeta(EffectMeta& meta)
 
 EffectHandle EffectSystem::CreateEffectFromFile(const EffectCreateDesc& desc, std::string* errorText)
 {
+    m_lastCreateError.clear();
     EffectCreateDesc resolved = desc;
-    if (resolved.shaderSource.empty() && !resolved.shaderFile.empty())
+    if (!LoadShaderFileIntoDesc(resolved, errorText))
     {
-        namespace fs = std::filesystem;
-        std::vector<fs::path> candidates;
-        const fs::path rawPath(resolved.shaderFile);
-        candidates.push_back(rawPath);
-        if (rawPath.is_relative())
-        {
-            const fs::path cwd = fs::current_path();
-            candidates.push_back(cwd / rawPath);
-            candidates.push_back(cwd / ".." / rawPath);
-            candidates.push_back(cwd / ".." / ".." / rawPath);
-            candidates.push_back(cwd / ".." / ".." / ".." / rawPath);
-        }
-
-        bool loaded = false;
-        std::string loadedFrom;
-        for (const fs::path& p : candidates)
-        {
-            std::error_code ec;
-            const fs::path normalized = fs::weakly_canonical(p, ec);
-            const std::string tryPath = ec ? p.string() : normalized.string();
-            if (ReadTextFile(tryPath, resolved.shaderSource))
-            {
-                loaded = true;
-                loadedFrom = tryPath;
-                break;
-            }
-        }
-
-        if (!loaded)
-        {
-            if (errorText)
-                *errorText = "Failed to read shader file: " + resolved.shaderFile + " (cwd: " + fs::current_path().string() + ")";
-            m_lastCreateError = errorText ? *errorText : "Failed to read shader file";
-            return kInvalidEffectHandle;
-        }
-        resolved.shaderFile = loadedFrom;
+        m_lastCreateError = errorText ? *errorText : std::string("Failed to read shader file");
+        return kInvalidEffectHandle;
     }
+
     EffectHandle h = CreateEffect(resolved, errorText);
-    if (h != kInvalidEffectHandle)
+    if (h.IsValid())
     {
         EffectMeta* meta = FindEffect(h);
         if (meta)
@@ -252,7 +314,7 @@ EffectHandle EffectSystem::CreateEffect(const EffectCreateDesc& desc, std::strin
         const auto itName = m_effectsByName.find(desc.name);
         if (itName != m_effectsByName.end())
         {
-            if (FindEffect(itName->second) == nullptr)
+            if (m_effects.find(itName->second) == m_effects.end())
                 m_effectsByName.erase(desc.name);
             else
             {
@@ -272,10 +334,10 @@ EffectHandle EffectSystem::CreateEffect(const EffectCreateDesc& desc, std::strin
         return kInvalidEffectHandle;
     }
 
-    EffectHandle handle = m_nextHandle++;
-    const std::string baseName = desc.name.empty() ? ("effect_" + std::to_string(handle)) : desc.name;
-    const std::string shaderKey = "ux_shader_" + baseName + "_" + std::to_string(handle);
-    const std::string pipelineKey = "ux_pipeline_" + baseName + "_" + std::to_string(handle);
+    const uint32_t id = m_nextId++;
+    const std::string baseName = desc.name.empty() ? ("effect_" + std::to_string(id)) : desc.name;
+    const std::string shaderKey = "ux_shader_" + baseName + "_" + std::to_string(id);
+    const std::string pipelineKey = "ux_pipeline_" + baseName + "_" + std::to_string(id);
     const std::string passKey = desc.passKey.empty() ? "OverlayPass" : desc.passKey;
 
     ImGuiRenderCore::ShaderDesc shaderDesc;
@@ -307,7 +369,8 @@ EffectHandle EffectSystem::CreateEffect(const EffectCreateDesc& desc, std::strin
     ImGui_ImplOpenGL3Slang_RegisterPipeline(pipelineDesc);
 
     EffectMeta meta;
-    meta.handle = handle;
+    meta.id = id;
+    meta.generation = 1;
     meta.name = baseName;
     meta.shaderKey = shaderKey;
     meta.pipelineKey = pipelineKey;
@@ -318,18 +381,20 @@ EffectHandle EffectSystem::CreateEffect(const EffectCreateDesc& desc, std::strin
     if (!desc.name.empty())
     {
         meta.registeredLookupName = desc.name;
-        RegisterEffectName(desc.name, handle);
+        RegisterEffectName(desc.name, id);
     }
     UpdateShaderMtimeForMeta(meta);
 
-    m_effects[handle] = std::move(meta);
-    return handle;
+    m_effects[id] = std::move(meta);
+    return EffectHandle{id, 1u};
 }
 
 bool EffectSystem::DestroyEffect(EffectHandle handle)
 {
-    auto it = m_effects.find(handle);
+    auto it = m_effects.find(handle.id);
     if (it == m_effects.end())
+        return false;
+    if (it->second.generation != handle.generation)
         return false;
     UnregisterEffectName(it->second.registeredLookupName);
     ImGui_ImplOpenGL3Slang_UnregisterEffectResources(it->second.shaderKey.c_str(), it->second.pipelineKey.c_str());
@@ -339,17 +404,77 @@ bool EffectSystem::DestroyEffect(EffectHandle handle)
 
 EffectHandle EffectSystem::ReloadEffect(EffectHandle handle, std::string* errorText)
 {
-    auto it = m_effects.find(handle);
-    if (it == m_effects.end())
-        return kInvalidEffectHandle;
-    EffectCreateDesc desc = it->second.storedDesc;
-    DestroyEffect(handle);
-    if (!desc.shaderFile.empty())
+    if (errorText)
+        errorText->clear();
+
+    EffectMeta* meta = FindEffect(handle);
+    if (!meta)
     {
-        desc.shaderSource.clear();
-        return CreateEffectFromFile(desc, errorText);
+        if (errorText)
+            *errorText = "ReloadEffect: invalid or stale effect handle";
+        m_lastCreateError = errorText ? *errorText : std::string("ReloadEffect: invalid handle");
+        return kInvalidEffectHandle;
     }
-    return CreateEffect(desc, errorText);
+
+    EffectCreateDesc desc = meta->storedDesc;
+    if (!desc.shaderFile.empty())
+        desc.shaderSource.clear();
+    if (!LoadShaderFileIntoDesc(desc, errorText))
+    {
+        m_lastCreateError = errorText ? *errorText : std::string("reload: file read failed");
+        return EffectHandle{meta->id, meta->generation};
+    }
+
+    if (desc.shaderSource.empty())
+    {
+        if (errorText)
+            *errorText = "ReloadEffect: empty shader source";
+        m_lastCreateError = *errorText;
+        return EffectHandle{meta->id, meta->generation};
+    }
+
+    ImGuiRenderCore::ShaderDesc shaderDesc;
+    shaderDesc.shaderKey = meta->shaderKey;
+    shaderDesc.source = desc.shaderSource;
+    shaderDesc.vertexEntry = desc.vertexEntry;
+    shaderDesc.fragmentEntry = desc.fragmentEntry;
+
+    const char* cErr = nullptr;
+    if (!ImGui_ImplOpenGL3Slang_RegisterShaderProgram(shaderDesc, &cErr))
+    {
+        if (errorText)
+        {
+            if (cErr && cErr[0])
+                *errorText = cErr;
+            else if (const char* last = ImGui_ImplOpenGL3Slang_GetLastError(); last && last[0])
+                *errorText = last;
+            else
+                *errorText = "RegisterShaderProgram failed during reload";
+        }
+        m_lastCreateError = (errorText && !errorText->empty()) ? *errorText : std::string("reload: compile failed");
+        return EffectHandle{meta->id, meta->generation};
+    }
+
+    ImGuiRenderCore::PipelineDesc pipelineDesc;
+    pipelineDesc.pipelineKey = meta->pipelineKey;
+    pipelineDesc.shaderKey = meta->shaderKey;
+    pipelineDesc.blendModeKey = BlendKey(desc.blendMode);
+    ImGui_ImplOpenGL3Slang_RegisterPipeline(pipelineDesc);
+
+    meta->storedDesc = desc;
+    meta->storedDesc.shaderSource = desc.shaderSource;
+    meta->generation++;
+    UpdateShaderMtimeForMeta(*meta);
+    m_lastCreateError.clear();
+    return EffectHandle{meta->id, meta->generation};
+}
+
+void EffectSystem::ExpectEffectUniformBytes(EffectHandle handle, size_t byteCount)
+{
+    EffectMeta* meta = FindEffect(handle);
+    if (!meta)
+        return;
+    meta->expectedUniformBytes = byteCount;
 }
 
 void EffectSystem::SetEffectUniformData(EffectHandle handle, const void* data, size_t bytes)
@@ -357,6 +482,8 @@ void EffectSystem::SetEffectUniformData(EffectHandle handle, const void* data, s
     EffectMeta* meta = FindEffect(handle);
     if (!meta || !data || bytes == 0)
         return;
+    if (meta->expectedUniformBytes != 0 && bytes != meta->expectedUniformBytes)
+        IM_ASSERT(false && "Effect uniform size mismatch (see ExpectEffectUniformBytes)");
     if (bytes > kEffectUniformBufferMaxBytes)
     {
         IM_ASSERT(false && "Effect uniform staging exceeds kEffectUniformBufferMaxBytes (see backend UBO size)");
@@ -370,6 +497,12 @@ void EffectSystem::AdvanceFrame()
 {
     m_frameIndex++;
     m_submitCountThisFrame = 0;
+    m_framePhase = EffectFramePhase::AfterAdvance;
+}
+
+void EffectSystem::NotifyAfterImGuiNewFrame()
+{
+    m_framePhase = EffectFramePhase::AfterImGuiNewFrame;
 }
 
 void EffectSystem::TickAutoReload(float deltaTime)
@@ -384,39 +517,46 @@ void EffectSystem::TickAutoReload(float deltaTime)
     std::vector<EffectHandle> reloadHandles;
     for (auto& kv : m_effects)
     {
-        EffectMeta& meta = kv.second;
-        if (meta.storedDesc.shaderFile.empty())
+        EffectMeta& em = kv.second;
+        if (em.storedDesc.shaderFile.empty())
             continue;
-        const long long tick = QueryFileMtimeTicks(meta.storedDesc.shaderFile);
+        const long long tick = QueryFileMtimeTicks(em.storedDesc.shaderFile);
         if (tick == 0)
             continue;
-        if (!meta.hasShaderFileMtime)
+        if (!em.hasShaderFileMtime)
         {
-            meta.shaderFileMtimeTick = tick;
-            meta.hasShaderFileMtime = true;
+            em.shaderFileMtimeTick = tick;
+            em.hasShaderFileMtime = true;
             continue;
         }
-        if (tick != meta.shaderFileMtimeTick)
-            reloadHandles.push_back(kv.first);
+        if (tick != em.shaderFileMtimeTick)
+            reloadHandles.push_back(EffectHandle{em.id, em.generation});
     }
 
     for (EffectHandle h : reloadHandles)
     {
         std::string err;
-        EffectHandle nu = ReloadEffect(h, &err);
-        if (nu == kInvalidEffectHandle && !err.empty())
+        ReloadEffect(h, &err);
+        if (!err.empty())
             m_lastCreateError = err;
     }
 }
 
 bool EffectSystem::BeginEffectWindow(const char* name, EffectHandle effectHandle, bool* p_open, ImGuiWindowFlags flags, FontEffectPolicy fontPolicy)
 {
+    if (m_frameContractTracing && m_framePhase == EffectFramePhase::AfterAdvance)
+        FrameContractTrace("BeginEffectWindow before NotifyAfterImGuiNewFrame(): call NotifyAfterImGuiNewFrame() after ImGui::NewFrame().");
+
+    IM_ASSERT((int)m_openCaptures.size() < kMaxOpenEffectCaptureDepth && "Open effect captures exceed kMaxOpenEffectCaptureDepth (unbalanced Begin/End?)");
+
+    TouchUiPhaseForCaptures();
+
     const bool open = ImGui::Begin(name, p_open, flags);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImGuiViewport* viewport = ImGui::GetWindowViewport();
     OpenCapture cap;
     cap.kind = OpenCapture::Kind::Window;
-    cap.effectHandle = effectHandle;
+    cap.token = effectHandle;
     cap.drawList = drawList;
     cap.viewportId = viewport ? viewport->ID : 0;
     const ImVec2 windowPos = ImGui::GetWindowPos();
@@ -445,23 +585,31 @@ void EffectSystem::EndEffectWindow()
 
     if (cap.drawList)
         cap.idxEnd = cap.drawList->IdxBuffer.Size;
-    if (FindEffect(cap.effectHandle) != nullptr)
+    if (FindEffect(cap.token) != nullptr)
         m_queuedCaptures.push_back(cap);
     ImGui::End();
 }
 
 bool EffectSystem::BeginEffectDrawRegion(EffectHandle effectHandle, FontEffectPolicy fontPolicy)
 {
+    if (m_frameContractTracing && m_framePhase == EffectFramePhase::AfterAdvance)
+        FrameContractTrace("BeginEffectDrawRegion before NotifyAfterImGuiNewFrame(): call NotifyAfterImGuiNewFrame() after ImGui::NewFrame().");
+
+    IM_ASSERT((int)m_openCaptures.size() < kMaxOpenEffectCaptureDepth && "Open effect captures exceed kMaxOpenEffectCaptureDepth");
+
     ImGuiWindow* win = ImGui::GetCurrentWindow();
     if (win == nullptr)
         return false;
     ImDrawList* drawList = win->DrawList;
     if (drawList == nullptr)
         return false;
+
+    TouchUiPhaseForCaptures();
+
     ImGuiViewport* viewport = ImGui::GetWindowViewport();
     OpenCapture cap;
     cap.kind = OpenCapture::Kind::Region;
-    cap.effectHandle = effectHandle;
+    cap.token = effectHandle;
     cap.drawList = drawList;
     cap.viewportId = viewport ? viewport->ID : 0;
     const ImRect& ir = win->InnerClipRect;
@@ -483,7 +631,7 @@ void EffectSystem::EndEffectDrawRegion()
 
     if (cap.drawList)
         cap.idxEnd = cap.drawList->IdxBuffer.Size;
-    if (FindEffect(cap.effectHandle) != nullptr)
+    if (FindEffect(cap.token) != nullptr)
         m_queuedCaptures.push_back(cap);
 }
 
@@ -496,8 +644,13 @@ void EffectSystem::EnqueueCustomDraw(EffectHandle effectHandle, const ImGuiRende
 
 void EffectSystem::ProcessOneCapture(const OpenCapture& cap, const ImTextureID fontTexId, EffectDebugStats& ioStats)
 {
-    const EffectMeta* meta = FindEffect(cap.effectHandle);
-    if (!meta || !cap.drawList)
+    const EffectMeta* meta = FindEffect(cap.token);
+    if (!meta)
+    {
+        ioStats.capturesSkippedStaleHandle++;
+        return;
+    }
+    if (!cap.drawList)
         return;
 
     ioStats.capturesProcessed++;
@@ -615,6 +768,7 @@ void EffectSystem::SubmitQueuedEffects()
     m_lastStats = stats;
     m_queuedCaptures.clear();
     m_explicitPackets.clear();
+    m_framePhase = EffectFramePhase::AfterSubmit;
 }
 
 void EffectSystem::ClearQueuedEffects()
@@ -632,8 +786,9 @@ void EffectSystem::ShowDebugWindow(bool* p_open)
         return;
     }
 
-    ImGui::Text("Frame index: %llu", (unsigned long long)m_frameIndex);
-    ImGui::TextUnformatted("Call AdvanceFrame() once at the start of each app loop iteration.");
+    ImGui::Text("Frame index: %llu  phase: %u", (unsigned long long)m_frameIndex, (unsigned)m_framePhase);
+    ImGui::Checkbox("Trace frame contract (stderr)", &m_frameContractTracing);
+    ImGui::TextUnformatted("Call AdvanceFrame() at loop start; NotifyAfterImGuiNewFrame() after ImGui::NewFrame().");
     ImGui::TextUnformatted("Use EffectSubmitGuard or a single SubmitQueuedEffects() before ImGui::Render().");
     ImGui::Separator();
 
@@ -641,7 +796,7 @@ void EffectSystem::ShowDebugWindow(bool* p_open)
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
     ImGui::DragFloat("interval (s)", &m_autoReloadIntervalSec, 0.05f, 0.1f, 5.f);
-    ImGui::TextUnformatted("After reload, use FindEffectByName(\"...\") - new GPU handle.");
+    ImGui::TextUnformatted("After successful reload, effect id is stable but generation increments (refresh FindEffectByName).");
 
     ImGui::Checkbox("Visualize capture clip rects", &m_debugDrawCaptureClips);
     ImGui::Separator();
@@ -649,7 +804,8 @@ void EffectSystem::ShowDebugWindow(bool* p_open)
     ImGui::TextColored(ImVec4(1.f, 0.85f, 0.4f, 1.f), "Font policy: IncludeFontAtlas can corrupt window chrome / text.");
     if (ImGui::CollapsingHeader("Last submit stats", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::Text("Captures: %u", m_lastStats.capturesProcessed);
+        ImGui::Text("Captures processed: %u", m_lastStats.capturesProcessed);
+        ImGui::Text("Captures skipped (stale handle): %u", m_lastStats.capturesSkippedStaleHandle);
         ImGui::Text("Draw cmds submitted: %u", m_lastStats.drawCommandsSubmitted);
         ImGui::Text("Skipped (font atlas): %u", m_lastStats.drawCommandsSkippedFont);
         ImGui::Text("Skipped (no overlap): %u", m_lastStats.drawCommandsSkippedNoOverlap);
@@ -659,7 +815,11 @@ void EffectSystem::ShowDebugWindow(bool* p_open)
     if (ImGui::CollapsingHeader("Registered effects (named lookup)"))
     {
         for (const auto& kv : m_effectsByName)
-            ImGui::BulletText("%s -> handle %u", kv.first.c_str(), (unsigned)kv.second);
+        {
+            auto mit = m_effects.find(kv.second);
+            const unsigned gen = (mit != m_effects.end()) ? (unsigned)mit->second.generation : 0u;
+            ImGui::BulletText("%s -> id %u gen %u", kv.first.c_str(), (unsigned)kv.second, gen);
+        }
         if (m_effectsByName.empty())
             ImGui::TextUnformatted("(no named effects)");
     }
@@ -668,8 +828,8 @@ void EffectSystem::ShowDebugWindow(bool* p_open)
         for (const auto& kv : m_effects)
         {
             const EffectMeta& m = kv.second;
-            ImGui::PushID((int)m.handle);
-            ImGui::BulletText("%s (handle %u)", m.name.c_str(), (unsigned)m.handle);
+            ImGui::PushID((int)m.id);
+            ImGui::BulletText("%s (id %u gen %u)", m.name.c_str(), (unsigned)m.id, (unsigned)m.generation);
             ImGui::Indent();
             if (!m.registeredLookupName.empty())
                 ImGui::Text("lookup: %s", m.registeredLookupName.c_str());
@@ -677,27 +837,36 @@ void EffectSystem::ShowDebugWindow(bool* p_open)
             ImGui::TextWrapped("pipeline: %s", m.pipelineKey.c_str());
             if (!m.storedDesc.shaderFile.empty())
                 ImGui::TextWrapped("shaderFile: %s", m.storedDesc.shaderFile.c_str());
-            ImGui::Text("uniform bytes staged: %zu", m.effectUniformStaging.size());
+            ImGui::Text("uniform bytes staged: %zu expected: %zu", m.effectUniformStaging.size(), m.expectedUniformBytes);
             ImGui::Unindent();
             ImGui::PopID();
         }
         if (m_effects.empty())
             ImGui::TextUnformatted("(none)");
-        static int s_reloadHandle = 1;
-        ImGui::InputInt("Reload effect handle", &s_reloadHandle);
-        if (ImGui::Button("Reload by handle"))
+        static int s_reloadId = 1;
+        ImGui::InputInt("Reload effect id", &s_reloadId);
+        if (ImGui::Button("Reload by id"))
         {
+            auto it = m_effects.find((uint32_t)s_reloadId);
             std::string err;
-            EffectHandle nu = ReloadEffect((EffectHandle)(unsigned)s_reloadHandle, &err);
-            if (nu != kInvalidEffectHandle)
+            if (it == m_effects.end())
             {
-                ImGui::SetClipboardText(std::to_string((unsigned)nu).c_str());
-                ImGui::Text("OK - new handle on clipboard: %u", (unsigned)nu);
+                err = "No effect with this id";
+                ImGui::SetClipboardText(err.c_str());
+                ImGui::TextUnformatted("Failed - error on clipboard");
             }
             else
             {
-                ImGui::SetClipboardText(err.c_str());
-                ImGui::TextUnformatted("Failed - error on clipboard");
+                EffectHandle h{it->second.id, it->second.generation};
+                EffectHandle nu = ReloadEffect(h, &err);
+                const std::string clip = err.empty()
+                    ? ("id=" + std::to_string(nu.id) + " gen=" + std::to_string(nu.generation))
+                    : err;
+                ImGui::SetClipboardText(clip.c_str());
+                if (err.empty())
+                    ImGui::Text("OK - token on clipboard: id %u gen %u", (unsigned)nu.id, (unsigned)nu.generation);
+                else
+                    ImGui::TextUnformatted("Failed - error on clipboard");
             }
         }
     }
