@@ -477,6 +477,14 @@ void EffectSystem::ExpectEffectUniformBytes(EffectHandle handle, size_t byteCoun
     meta->expectedUniformBytes = byteCount;
 }
 
+void EffectSystem::SetEffectPaletteTexture(EffectHandle handle, ImTextureID palette)
+{
+    EffectMeta* meta = FindEffect(handle);
+    if (!meta)
+        return;
+    meta->paletteTexture = palette;
+}
+
 void EffectSystem::SetEffectUniformData(EffectHandle handle, const void* data, size_t bytes)
 {
     EffectMeta* meta = FindEffect(handle);
@@ -699,6 +707,7 @@ void EffectSystem::ProcessOneCapture(const OpenCapture& cap, const ImTextureID f
         ImGuiRenderCore::DrawPacket packet;
         packet.pipelineKey = meta->pipelineKey;
         packet.texture = texId;
+        packet.paletteTexture = meta->paletteTexture;
         packet.viewportId = cap.viewportId;
         packet.clipRect.x = (cmd->ClipRect.x > cap.contentClipMin.x) ? cmd->ClipRect.x : cap.contentClipMin.x;
         packet.clipRect.y = (cmd->ClipRect.y > cap.contentClipMin.y) ? cmd->ClipRect.y : cap.contentClipMin.y;
@@ -751,6 +760,8 @@ void EffectSystem::SubmitQueuedEffects()
         ImGuiRenderCore::DrawPacket pkt = ep.second;
         if (pkt.pipelineKey.empty())
             pkt.pipelineKey = meta->pipelineKey;
+        if (pkt.paletteTexture == ImTextureID_Invalid)
+            pkt.paletteTexture = meta->paletteTexture;
         if (!meta->effectUniformStaging.empty() && meta->effectUniformBinding != 0)
         {
             if (meta->effectUniformStaging.size() > kEffectUniformBufferMaxBytes)

@@ -19,6 +19,7 @@
 #include "imgui_shader_manager_slang.h"
 #include <stdio.h>
 #include <stdint.h>     // intptr_t
+#include <cstring>      // std::strstr (palette sampler discovery after Slang)
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -162,6 +163,7 @@ struct ShaderProgramState
 {
     GLuint program = 0;
     GLint textureLocation = -1;
+    GLint paletteTextureLocation = -1;
 };
 static std::unordered_map<std::string, ShaderProgramState> g_ShaderPrograms;
 static ImGui_ImplOpenGL3Slang_Stats g_LastStats;
@@ -698,6 +700,25 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
             GL_CALL(glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)packet.texture));
         }
 
+        // Always bind unit 1 when a palette is provided: Slang may use layout(binding=1) without a
+        // `glGetUniformLocation("Texture_palette")` handle; leaving unit 1 unbound yields black samples.
+        if (packet.paletteTexture != ImTextureID_Invalid)
+        {
+            auto itPipeline = g_Pipelines.find(packet.pipelineKey);
+            if (itPipeline != g_Pipelines.end())
+            {
+                auto itProgram = g_ShaderPrograms.find(itPipeline->second.shaderKey);
+                if (itProgram != g_ShaderPrograms.end() && itProgram->second.program != 0)
+                {
+                    GL_CALL(glActiveTexture(GL_TEXTURE1));
+                    GL_CALL(glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)packet.paletteTexture));
+                    if (itProgram->second.paletteTextureLocation >= 0)
+                        GL_CALL(glUniform1i(itProgram->second.paletteTextureLocation, 1));
+                    GL_CALL(glActiveTexture(GL_TEXTURE0));
+                }
+            }
+        }
+
 #ifdef IMGUI_IMPL_OPENGL_MAY_HAVE_VTX_OFFSET
         if (bd->GlVersion >= 320)
         {
@@ -922,6 +943,26 @@ static bool CreateProgramFromGLSL(const char* vertexShaderGLSL, const char* frag
 
     outState->program = program;
     outState->textureLocation = glGetUniformLocation(program, "Texture_0");
+    outState->paletteTextureLocation = glGetUniformLocation(program, "Texture_palette");
+    if (outState->paletteTextureLocation < 0)
+    {
+        GLint numUniforms = 0;
+        glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &numUniforms);
+        char nameBuf[256];
+        for (GLint ui = 0; ui < numUniforms; ++ui)
+        {
+            GLsizei nameLen = 0;
+            GLint uSize = 0;
+            GLenum uType = 0;
+            glGetActiveUniform(program, (GLuint)ui, (GLsizei)sizeof(nameBuf), &nameLen, &uSize, &uType, nameBuf);
+            if (uType != GL_SAMPLER_2D)
+                continue;
+            if (std::strstr(nameBuf, "palette") == nullptr)
+                continue;
+            outState->paletteTextureLocation = glGetUniformLocation(program, nameBuf);
+            break;
+        }
+    }
     GLuint blockIndex = glGetUniformBlockIndex(program, "block_GlobalParams_0");
     if (blockIndex != GL_INVALID_INDEX)
         glUniformBlockBinding(program, blockIndex, 1);

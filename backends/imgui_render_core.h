@@ -77,6 +77,8 @@ struct DrawPacket
 {
     std::string pipelineKey;
     ImTextureID texture = ImTextureID_Invalid;
+    /// Optional second sampler (e.g. 1xW gradient palette at OpenGL texture unit 1, shader `Texture_palette`).
+    ImTextureID paletteTexture = ImTextureID_Invalid;
     ImGuiID viewportId = 0;
     ImVec4 clipRect{};
     int elemCount = 0;

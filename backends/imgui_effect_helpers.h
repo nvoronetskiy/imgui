@@ -142,6 +142,9 @@ public:
     /// If non-zero, `SetEffectUniformData` must receive exactly this many bytes (debug builds assert).
     void ExpectEffectUniformBytes(EffectHandle handle, size_t byteCount);
 
+    /// Optional 2D texture (e.g. 1xN strip) bound to OpenGL unit 1 for shaders that declare `Texture_palette`. Lifetime owned by caller.
+    void SetEffectPaletteTexture(EffectHandle handle, ImTextureID palette);
+
     template<typename T>
     void SetEffectUniformStruct(EffectHandle handle, const T& value)
     {
@@ -203,6 +206,7 @@ private:
         uint32_t effectUniformBinding = 2;
         std::vector<uint8_t> effectUniformStaging;
         size_t   expectedUniformBytes = 0;
+        ImTextureID paletteTexture = ImTextureID_Invalid;
         long long    shaderFileMtimeTick = 0;
         bool         hasShaderFileMtime = false;
     };
