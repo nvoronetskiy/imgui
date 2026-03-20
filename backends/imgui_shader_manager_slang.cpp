@@ -45,6 +45,11 @@ const CompiledShader* ShaderManagerSlang::FindCompiled(const std::string& shader
     return &it->second;
 }
 
+void ShaderManagerSlang::RemoveShader(const std::string& shaderKey)
+{
+    m_compiledByKey.erase(shaderKey);
+}
+
 void ShaderManagerSlang::Clear()
 {
     m_compiledByKey.clear();

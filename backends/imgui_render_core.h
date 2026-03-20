@@ -85,6 +85,10 @@ struct DrawPacket
     const ImDrawList* drawList = nullptr;
     const ImDrawCmd* drawCmd = nullptr;
     bool isImGuiPacket = true;
+    /// Optional std140 UBO for custom effect shaders (e.g. Slang `[[vk::binding(2)]] cbuffer ...`).
+    /// When non-zero and effectUniformBytes non-empty, the backend uploads bytes to this binding.
+    uint32_t effectUniformBinding = 0;
+    std::vector<uint8_t> effectUniformBytes;
 };
 
 struct FrameCommandList
