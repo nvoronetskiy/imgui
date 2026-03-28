@@ -22,6 +22,7 @@ class ShaderManagerSlang
 public:
     bool RegisterOrUpdateShader(const ShaderDesc& desc, std::string* errorText);
     const CompiledShader* FindCompiled(const std::string& shaderKey) const;
+    void RemoveShader(const std::string& shaderKey);
     void Clear();
 
 private:

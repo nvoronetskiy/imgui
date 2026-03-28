@@ -21,6 +21,10 @@ IMGUI_IMPL_API void     ImGui_ImplOpenGL3Slang_RegisterBlendMode(const char* ble
 IMGUI_IMPL_API void     ImGui_ImplOpenGL3Slang_RegisterPipeline(const ImGuiRenderCore::PipelineDesc& pipelineDesc);
 IMGUI_IMPL_API void     ImGui_ImplOpenGL3Slang_PushCustomDraw(const char* passKey, const ImGuiRenderCore::DrawPacket& drawPacket);
 IMGUI_IMPL_API void     ImGui_ImplOpenGL3Slang_SetGlobalUniformBlock(const char* blockName, uint32_t binding, const void* data, size_t bytes);
+// Release GPU program + pipeline registration for an effect (not the default ImGui shader).
+IMGUI_IMPL_API void     ImGui_ImplOpenGL3Slang_UnregisterEffectResources(const char* shaderKey, const char* pipelineKey);
+// Last error from RegisterShaderProgram / compililation (empty string if none).
+IMGUI_IMPL_API const char* ImGui_ImplOpenGL3Slang_GetLastError();
 
 struct ImGui_ImplOpenGL3Slang_Stats
 {

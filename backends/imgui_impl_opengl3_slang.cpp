@@ -19,6 +19,7 @@
 #include "imgui_shader_manager_slang.h"
 #include <stdio.h>
 #include <stdint.h>     // intptr_t
+#include <cstring>      // std::strstr (palette sampler discovery after Slang)
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -139,6 +140,7 @@ struct ImGui_ImplOpenGL3Slang_Data
     GLuint          AttribLocationVtxUV;
     GLuint          AttribLocationVtxColor;
     unsigned int    VboHandle, ElementsHandle;
+    GLuint          EffectParamsUbo;         // std140 scratch buffer for per-draw effect uniforms (binding 2)
     GLsizeiptr      VertexBufferSize;
     GLsizeiptr      IndexBufferSize;
     bool            HasPolygonMode;
@@ -161,6 +163,7 @@ struct ShaderProgramState
 {
     GLuint program = 0;
     GLint textureLocation = -1;
+    GLint paletteTextureLocation = -1;
 };
 static std::unordered_map<std::string, ShaderProgramState> g_ShaderPrograms;
 static ImGui_ImplOpenGL3Slang_Stats g_LastStats;
@@ -634,6 +637,15 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
                         glUniform1i(itProgram->second.textureLocation, 0);
                     if (bd->UboHandle)
                         glBindBufferBase(GL_UNIFORM_BUFFER, 1, bd->UboHandle);
+                    if (!packet.effectUniformBytes.empty() && packet.effectUniformBinding != 0 && bd->EffectParamsUbo != 0)
+                    {
+                        GLsizeiptr ubo_sz = (GLsizeiptr)packet.effectUniformBytes.size();
+                        if (ubo_sz > 256)
+                            ubo_sz = 256;
+                        GL_CALL(glBindBuffer(GL_UNIFORM_BUFFER, bd->EffectParamsUbo));
+                        GL_CALL(glBufferSubData(GL_UNIFORM_BUFFER, 0, ubo_sz, packet.effectUniformBytes.data()));
+                        glBindBufferBase(GL_UNIFORM_BUFFER, (GLuint)packet.effectUniformBinding, bd->EffectParamsUbo);
+                    }
                 }
             }
         }
@@ -686,6 +698,25 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
         {
             glActiveTexture(GL_TEXTURE0);
             GL_CALL(glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)packet.texture));
+        }
+
+        // Always bind unit 1 when a palette is provided: Slang may use layout(binding=1) without a
+        // `glGetUniformLocation("Texture_palette")` handle; leaving unit 1 unbound yields black samples.
+        if (packet.paletteTexture != ImTextureID_Invalid)
+        {
+            auto itPipeline = g_Pipelines.find(packet.pipelineKey);
+            if (itPipeline != g_Pipelines.end())
+            {
+                auto itProgram = g_ShaderPrograms.find(itPipeline->second.shaderKey);
+                if (itProgram != g_ShaderPrograms.end() && itProgram->second.program != 0)
+                {
+                    GL_CALL(glActiveTexture(GL_TEXTURE1));
+                    GL_CALL(glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)packet.paletteTexture));
+                    if (itProgram->second.paletteTextureLocation >= 0)
+                        GL_CALL(glUniform1i(itProgram->second.paletteTextureLocation, 1));
+                    GL_CALL(glActiveTexture(GL_TEXTURE0));
+                }
+            }
         }
 
 #ifdef IMGUI_IMPL_OPENGL_MAY_HAVE_VTX_OFFSET
@@ -912,9 +943,32 @@ static bool CreateProgramFromGLSL(const char* vertexShaderGLSL, const char* frag
 
     outState->program = program;
     outState->textureLocation = glGetUniformLocation(program, "Texture_0");
+    outState->paletteTextureLocation = glGetUniformLocation(program, "Texture_palette");
+    if (outState->paletteTextureLocation < 0)
+    {
+        GLint numUniforms = 0;
+        glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &numUniforms);
+        char nameBuf[256];
+        for (GLint ui = 0; ui < numUniforms; ++ui)
+        {
+            GLsizei nameLen = 0;
+            GLint uSize = 0;
+            GLenum uType = 0;
+            glGetActiveUniform(program, (GLuint)ui, (GLsizei)sizeof(nameBuf), &nameLen, &uSize, &uType, nameBuf);
+            if (uType != GL_SAMPLER_2D)
+                continue;
+            if (std::strstr(nameBuf, "palette") == nullptr)
+                continue;
+            outState->paletteTextureLocation = glGetUniformLocation(program, nameBuf);
+            break;
+        }
+    }
     GLuint blockIndex = glGetUniformBlockIndex(program, "block_GlobalParams_0");
     if (blockIndex != GL_INVALID_INDEX)
         glUniformBlockBinding(program, blockIndex, 1);
+    GLuint effectBlockIndex = glGetUniformBlockIndex(program, "block_EffectParams_0");
+    if (effectBlockIndex != GL_INVALID_INDEX)
+        glUniformBlockBinding(program, effectBlockIndex, 2);
     return true;
 }
 
@@ -1098,6 +1152,14 @@ float4 fragmentMain(
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
+    if (bd->EffectParamsUbo == 0)
+    {
+        glGenBuffers(1, &bd->EffectParamsUbo);
+        glBindBuffer(GL_UNIFORM_BUFFER, bd->EffectParamsUbo);
+        glBufferData(GL_UNIFORM_BUFFER, 256, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
+
     // Create buffers
     glGenBuffers(1, &bd->VboHandle);
     glGenBuffers(1, &bd->ElementsHandle);
@@ -1122,6 +1184,7 @@ void    ImGui_ImplOpenGL3Slang_DestroyDeviceObjects()
     if (bd->VboHandle)      { glDeleteBuffers(1, &bd->VboHandle); bd->VboHandle = 0; }
     if (bd->ElementsHandle) { glDeleteBuffers(1, &bd->ElementsHandle); bd->ElementsHandle = 0; }
     if (bd->UboHandle)      { glDeleteBuffers(1, &bd->UboHandle); bd->UboHandle = 0; }
+    if (bd->EffectParamsUbo) { glDeleteBuffers(1, &bd->EffectParamsUbo); bd->EffectParamsUbo = 0; }
     for (auto& it : g_ShaderPrograms)
     {
         if (it.second.program != 0 && it.second.program != bd->ShaderHandle)
@@ -1159,10 +1222,6 @@ bool ImGui_ImplOpenGL3Slang_RegisterShaderProgram(const ImGuiRenderCore::ShaderD
         return false;
     }
 
-    auto existing = g_ShaderPrograms.find(shaderDesc.shaderKey);
-    if (existing != g_ShaderPrograms.end() && existing->second.program != 0)
-        glDeleteProgram(existing->second.program);
-
     ShaderProgramState state;
     if (!CreateProgramFromGLSL(compiled->vertexGLSL.c_str(), compiled->fragmentGLSL.c_str(), &state))
     {
@@ -1170,6 +1229,10 @@ bool ImGui_ImplOpenGL3Slang_RegisterShaderProgram(const ImGuiRenderCore::ShaderD
         if (errorText) *errorText = g_LastErrorText.c_str();
         return false;
     }
+
+    auto existing = g_ShaderPrograms.find(shaderDesc.shaderKey);
+    if (existing != g_ShaderPrograms.end() && existing->second.program != 0)
+        glDeleteProgram(existing->second.program);
     g_ShaderPrograms[shaderDesc.shaderKey] = state;
     g_Shaders[shaderDesc.shaderKey] = shaderDesc;
     if (errorText) *errorText = nullptr;
@@ -1196,6 +1259,44 @@ void ImGui_ImplOpenGL3Slang_PushCustomDraw(const char* passKey, const ImGuiRende
     if (!bd || !bd->CustomPasses || !passKey || passKey[0] == '\0')
         return;
     bd->CustomPasses->PushPacket(passKey, drawPacket);
+}
+
+void ImGui_ImplOpenGL3Slang_UnregisterEffectResources(const char* shaderKey, const char* pipelineKey)
+{
+    ImGui_ImplOpenGL3Slang_Data* bd = ImGui_ImplOpenGL3Slang_GetBackendData();
+    auto delete_program_safe = [&](GLuint program) {
+        if (program == 0)
+            return;
+        if (bd != nullptr && program == bd->ShaderHandle)
+            return;
+        glDeleteProgram(program);
+    };
+
+    if (pipelineKey != nullptr && pipelineKey[0] != '\0')
+    {
+        if (strcmp(pipelineKey, "imgui_default") != 0)
+            g_Pipelines.erase(pipelineKey);
+    }
+    if (shaderKey != nullptr && shaderKey[0] != '\0')
+    {
+        if (strcmp(shaderKey, "imgui_default") != 0)
+        {
+            auto itProg = g_ShaderPrograms.find(shaderKey);
+            if (itProg != g_ShaderPrograms.end())
+            {
+                delete_program_safe(itProg->second.program);
+                g_ShaderPrograms.erase(itProg);
+            }
+            g_Shaders.erase(shaderKey);
+            if (bd != nullptr && bd->ShaderManager != nullptr)
+                bd->ShaderManager->RemoveShader(shaderKey);
+        }
+    }
+}
+
+const char* ImGui_ImplOpenGL3Slang_GetLastError()
+{
+    return g_LastErrorText.c_str();
 }
 
 void ImGui_ImplOpenGL3Slang_SetGlobalUniformBlock(const char* blockName, uint32_t binding, const void* data, size_t bytes)
