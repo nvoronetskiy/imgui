@@ -53,6 +53,8 @@ Breaking Changes:
       BeginChild("ScrollingRegion", { 0, -footer_height });
    When such idiom was used and assuming zero-height Separator, it is likely that
    in 1.92.7 the resulting window will have unexpected 1 pixel scrolling range.
+ - Multi-Select: renamed ImGuiMultiSelectFlags_SelectOnClick to ImGuiMultiSelectFlags_SelectOnAuto.
+   Kept inline redirection enum (will obsolete).
  - Combo(), ListBox(): commented out legacy signatures which were obsoleted in 1.90
    (Nov 2023), when the getter callback type was changed from:
       getter type:   bool (*getter)(void* user_data, int idx, const char** out_text)
@@ -75,6 +77,21 @@ Other Changes:
   - Reworked io.ConfigInputTextEnterKeepActive mode so that pressing Enter will
     deactivate/reactivate the item in order for e.g. IsItemDeactivatedAfterEdit()
     signals to be emitted the same way regardless of that setting. (#9001, #9115)
+  - Fixed a glitch when using ImGuiInputTextFlags_ElideLeft where the local x offset
+    would be incorrect during the deactivation frame. (#9298)
+  - Fixed a crash introduced in 1.92.6 when handling ImGuiInputTextFlags_CallbackResize
+    in certain situations. (#9174)
+  - Fixed selection highlight Y1 offset being very slightly off (since 1.92.3). (#9311) [@v-ein]
+  - InputTextMultiline: fixed an issue introduced in 1.92.3 where line count calculated
+    for vertical scrollbar range would be +1 when the widget is inactive, word-wrap is
+    disabled and the text buffer ends with '\n'. Fixed a similar issue related to clipping
+    large amount of text.
+  - InputTextMultiline: avoid going through reactivation code and fixed losing revert value
+    when activating scrollbar.
+  - InputTextMultiline: fixed an issue where edit buffer wouldn't be reapplied to back
+    buffer on the IsItemDeactivatedAfterEdit() frame. This could create issues when
+    using the idiom of not applying edits before IsItemDeactivatedAfterEdit().
+    (#9308, #8915, #8273)
 - Style:
   - Border sizes are now scaled (and rounded) by ScaleAllSizes().
   - When using large values with ScallAllSizes(), the following items thickness
@@ -84,6 +101,21 @@ Other Changes:
     - TextLink() underline thickness.
     - ColorButton() border thickness.
     - Separator() thickness, via scaling newly added style.SeparatorSize. (#2657, #9263)
+- Nav:
+  - Changed Gamepad mapping for "Activate with Text Input" action: (#8803, #787)
+    - Previously: press North button (PS4/PS5 triangle, Switch X, Xbox Y).
+    - Now: long press (hold) Activate button (PS4/PS5 cross, Switch B, Xbox A) for ~0.60 secs.
+    This is rarely used, somehow easier to discover, and frees a button for other uses.
+    See updated Gamepad Control Sheets: https://www.dearimgui.com/controls_sheets
+  - Short Gamepad Activation press on InputText() always activate with Text Input mode.
+  - Popups: Shift+F10 or Menu key can now open popups menus when using
+    BeginPopupContextItem(), BeginPopupContextWindow() or OpenPopupOnItemClick().
+    (#8803, #9270) [@exelix11, @ocornut]
+  - Popups: pressing North button (PS4/PS5 triangle, SwitchX, Xbox Y) also open popups menus.
+- Multi-Select:
+  - Added ImGuiMultiSelectFlags_SelectOnClickAlways mode (rarely used).
+    This prevents Drag and Drop of multiple items, but it allows to start a new Box-Selection
+    from inside an existing selection (Excel style). (#9307, #1861)
 - Clipper:
   - Clear `DisplayStart`/`DisplayEnd` fields when `Step()` returns false.
   - Added `UserIndex` helper storage. This is solely a convenience for cases where
@@ -92,8 +124,22 @@ Other Changes:
   - Implemented a custom tweak to extend hit-testing bounding box when window is sitting
     at the edge of a viewport (e.g. fullscreen or docked window), so that e.g. mouse the
     mouse at the extreme of the screen will reach the scrollbar. (#9276)
+  - Fixed an issue which could lead initial click to move the current scroll by a pixel.
+- Button:
+  - Moved ImGuiButtonFlags_AllowOverlap from imgui_internal.h to imgui.h,
+    as a convenience for when using e.g. InvisibleButton().
+- Focus: fixed fallback "Debug" window temporarily taking focus and setting io.WantCaptureKeyboard
+  for one frame on e.g. application boot if no other windows are submitted. (#9243)
+- Memory:
+  - Discard/GC of ImDrawList buffers for unused windows favor restoring them to
+    ~Size*1.05 instead of Capacity when awakening again. Facilitate releasing ImDrawList
+    buffers after unusual usage spike. (#9303)
+  - Fixed GetForegroundDrawList()/GetBackgroundDrawList() per-viewport buffers not being
+    collected when unused for io.ConfigMemoryCompactTimer amount of time. (#9303)
 - Demo: fixed IMGUI_DEMO_MARKER locations for examples applets. (#9261, #3689) [@pthom]
 - Backends:
+  - DirectX9, OpenGL2, OpenGL3, Metal, SDLGPU3, SDLRenderer2, SDLRenderer3: fixed easy-to-fix
+    issues in code assuming ImTextureID_Invalid is always defined to 0. (#9295, #9310)
   - SDLGPU3: removed unnecessary call to SDL_WaitForGPUIdle when releasing
     vertex/index buffers. (#9262) [@jaenis]
   - WebGPU: fixed version check for Emscripten 5.0.0+.
@@ -107,8 +153,11 @@ Other Changes:
     - hidden scrollbar in Firefox.
   - Vulkan: added ImGui_ImplVulkan_PipelineInfo::ExtraDynamicStates[] to allow specifying
     extra dynamic states to add when creating the VkPipeline. (#9211) [@DziubanMaciej]
+  - Vulkan: ImGui_ImplVulkan_AddTexture() skips updating descriptor_set if failing
+    to allocate one. (#8677) [@micb25]
   - WebGPU: fixed undefined behaviors in example code for requesting adapter
     and device. (#9246, #9256) [@r-lyeh]
+  - SDL2+WebGPU: fixed hi-dpi handling. (#9300) [@ypujante]
   - GLFW/SDL2/SDL3+WebGPU: removed suport for Emscripten <4.0.10. (#9281) [@ypujante]
 
 Docking+Viewports Branch:
@@ -121,6 +170,8 @@ Docking+Viewports Branch:
   - Backends: SDL2, SDL3: fixed an issue dated 2025/04/09 (1.92 WIP) where a refactor
     and a merge caused ImGuiBackendFlags_HasMouseHoveredViewport to never be set, causing
     foreign windows to be ignored when deciding of hovered viewport. (#9284) [@ravencgg]
+  - Backends: SDL3: use SDL_HAS_EVENT_DISPLAY_USABLE_BOUNDS_CHANGED (SDL 3.4.0+) when
+    available to avoid refreshing monitor work area every frame on Windows. (#8415)
 
 
 -----------------------------------------------------------------------
