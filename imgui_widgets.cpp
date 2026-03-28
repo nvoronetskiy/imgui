@@ -135,7 +135,7 @@ static const ImU64          IM_U64_MAX = (2ULL * 9223372036854775807LL + 1);
 //-------------------------------------------------------------------------
 
 // For InputTextEx()
-static bool     InputTextFilterCharacter(ImGuiContext* ctx, unsigned int* p_char, ImGuiInputTextFlags flags, ImGuiInputTextCallback callback, void* user_data, bool input_source_is_clipboard = false);
+static bool     InputTextFilterCharacter(ImGuiContext* ctx, ImGuiInputTextState* state, unsigned int* p_char, ImGuiInputTextCallback callback, void* user_data, bool input_source_is_clipboard = false);
 static ImVec2   InputTextCalcTextSize(ImGuiContext* ctx, const char* text_begin, const char* text_end_display, const char* text_end, const char** out_remaining = NULL, ImVec2* out_offset = NULL, ImDrawTextFlags flags = 0);
 
 //-------------------------------------------------------------------------
@@ -4409,10 +4409,11 @@ void ImGui::PopPasswordFont()
 }
 
 // Return false to discard a character.
-static bool InputTextFilterCharacter(ImGuiContext* ctx, unsigned int* p_char, ImGuiInputTextFlags flags, ImGuiInputTextCallback callback, void* user_data, bool input_source_is_clipboard)
+static bool InputTextFilterCharacter(ImGuiContext* ctx, ImGuiInputTextState* state, unsigned int* p_char, ImGuiInputTextCallback callback, void* user_data, bool input_source_is_clipboard)
 {
     IM_ASSERT(state != NULL);
     unsigned int c = *p_char;
+    ImGuiInputTextFlags flags = state->Flags;
 
     // Filter non-printable (NB: isprint is unreliable! see #2467)
     bool apply_named_filters = true;
@@ -4502,9 +4503,11 @@ static bool InputTextFilterCharacter(ImGuiContext* ctx, unsigned int* p_char, Im
         ImGuiContext& g = *GImGui;
         ImGuiInputTextCallbackData callback_data;
         callback_data.Ctx = &g;
+        callback_data.ID = state->ID;
+        callback_data.Flags = flags;
         callback_data.EventFlag = ImGuiInputTextFlags_CallbackCharFilter;
         callback_data.EventChar = (ImWchar)c;
-        callback_data.Flags = flags;
+        callback_data.EventActivated = (g.ActiveId == state->ID && g.ActiveIdIsJustActivated);
         callback_data.UserData = user_data;
         if (callback(&callback_data) != 0)
             return false;
@@ -5029,7 +5032,7 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
             if (Shortcut(ImGuiKey_Tab, ImGuiInputFlags_Repeat, id))
             {
                 unsigned int c = '\t'; // Insert TAB
-                if (InputTextFilterCharacter(&g, &c, flags, callback, callback_user_data))
+                if (InputTextFilterCharacter(&g, state, &c, callback, callback_user_data))
                     state->OnCharPressed(c);
             }
             // FIXME: Implement Shift+Tab
@@ -5052,7 +5055,7 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
                     unsigned int c = (unsigned int)io.InputQueueCharacters[n];
                     if (c == '\t') // Skip Tab, see above.
                         continue;
-                    if (InputTextFilterCharacter(&g, &c, flags, callback, callback_user_data))
+                    if (InputTextFilterCharacter(&g, state, &c, callback, callback_user_data))
                         state->OnCharPressed(c);
                 }
 
@@ -5142,7 +5145,7 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
             {
                 // Insert new line
                 unsigned int c = '\n';
-                if (InputTextFilterCharacter(&g, &c, flags, callback, callback_user_data))
+                if (InputTextFilterCharacter(&g, state, &c, callback, callback_user_data))
                     state->OnCharPressed(c);
             }
         }
@@ -5211,7 +5214,7 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
                     unsigned int c;
                     int in_len = ImTextCharFromUtf8(&c, s, clipboard_end);
                     s += in_len;
-                    if (!InputTextFilterCharacter(&g, &c, flags, callback, callback_user_data, true))
+                    if (!InputTextFilterCharacter(&g, state, &c, callback, callback_user_data, true))
                         continue;
                     char c_utf8[5];
                     ImTextCharToUtf8(c_utf8, c);
