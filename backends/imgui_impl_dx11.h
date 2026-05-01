@@ -45,8 +45,9 @@ struct ImGui_ImplDX11_RenderState
 {
     ID3D11Device*           Device;
     ID3D11DeviceContext*    DeviceContext;
-    ID3D11SamplerState*     SamplerDefault;
     ID3D11Buffer*           VertexConstantBuffer;
+    //ID3D11SamplerState*   SamplerLinear;          // Use ImDrawList::AddCallback(ImGui::GetPlatform().DrawCallback_SetSamplerLinear)
+    //ID3D11SamplerState*   SamplerNearest;         // Use ImDrawList::AddCallback(ImGui::GetPlatform().DrawCallback_SetSamplerNearest)
 };
 
 #endif // #ifndef IMGUI_DISABLE
