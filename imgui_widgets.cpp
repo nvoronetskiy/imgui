@@ -1158,7 +1158,7 @@ void ImGui::ImageWithBg(ImTextureRef tex_ref, const ImVec2& image_size, const Im
     else
         window->DrawList->AddImage(tex_ref, bb.Min + padding, bb.Max - padding, uv0, uv1, GetColorU32(tint_col));
     if (g.Style.ImageBorderSize > 0.0f)
-        window->DrawList->AddRect(bb.Min, bb.Max, GetColorU32(ImGuiCol_Border), rounding, ImDrawFlags_None, g.Style.ImageBorderSize);
+        window->DrawList->AddRect(bb.Min, bb.Max, GetColorU32(ImGuiCol_Border), rounding, g.Style.ImageBorderSize);
 }
 
 void ImGui::Image(ImTextureRef tex_ref, const ImVec2& image_size, const ImVec2& uv0, const ImVec2& uv1)
@@ -1563,7 +1563,7 @@ bool ImGui::TextLink(const char* label)
     }
 
     float line_y = bb.Max.y + ImFloor(g.FontBaked->Descent * g.FontBakedScale * 0.20f);
-    window->DrawList->AddLine(ImVec2(bb.Min.x, line_y), ImVec2(bb.Max.x, line_y), GetColorU32(line_colf), 1.0f * (float)(int)g.Style._MainScale); // FIXME-TEXT: Underline mode // FIXME-DPI
+    window->DrawList->AddLineH(bb.Min.x, bb.Max.x, line_y, GetColorU32(line_colf), 1.0f * (float)(int)g.Style._MainScale); // FIXME-TEXT: Underline mode // FIXME-DPI
 
     PushStyleColor(ImGuiCol_Text, GetColorU32(text_colf));
     RenderText(bb.Min, label, label_end, false);
@@ -1773,9 +1773,9 @@ void ImGui::SeparatorTextEx(ImGuiID id, const char* label, const char* label_end
         const float sep1_x2 = label_pos.x - style.ItemSpacing.x;
         const float sep2_x1 = label_pos.x + label_size.x + extra_w + style.ItemSpacing.x;
         if (sep1_x2 > sep1_x1 && separator_thickness > 0.0f)
-            window->DrawList->AddLine(ImVec2(sep1_x1, seps_y), ImVec2(sep1_x2, seps_y), separator_col, separator_thickness);
+            window->DrawList->AddLineH(sep1_x1, sep1_x2, seps_y, separator_col, separator_thickness);
         if (sep2_x2 > sep2_x1 && separator_thickness > 0.0f)
-            window->DrawList->AddLine(ImVec2(sep2_x1, seps_y), ImVec2(sep2_x2, seps_y), separator_col, separator_thickness);
+            window->DrawList->AddLineH(sep2_x1, sep2_x2, seps_y, separator_col, separator_thickness);
         if (g.LogEnabled)
             LogSetNextTextDecoration("---", NULL);
         RenderTextEllipsis(window->DrawList, label_pos, ImVec2(bb.Max.x, bb.Max.y + style.ItemSpacing.y), bb.Max.x, label, label_end, &label_size);
@@ -1785,7 +1785,7 @@ void ImGui::SeparatorTextEx(ImGuiID id, const char* label, const char* label_end
         if (g.LogEnabled)
             LogText("---");
         if (separator_thickness > 0.0f)
-            window->DrawList->AddLine(ImVec2(sep1_x1, seps_y), ImVec2(sep2_x2, seps_y), separator_col, separator_thickness);
+            window->DrawList->AddLineH(sep1_x1, sep2_x2, seps_y, separator_col, separator_thickness);
     }
 }
 
@@ -2385,12 +2385,17 @@ bool ImGui::DataTypeApplyFromText(const char* buf, ImGuiDataType data_type, void
 
     // Sanitize format
     // - For float/double we have to ignore format with precision (e.g. "%.2f") because sscanf doesn't take them in, so force them into %f and %lf
-    // - In theory could treat empty format as using default, but this would only cover rare/bizarre case of using InputScalar() + integer + format string without %.
     char format_sanitized[32];
     if (data_type == ImGuiDataType_Float || data_type == ImGuiDataType_Double)
+    {
         format = type_info->ScanFmt;
+    }
     else
+    {
         format = ImParseFormatSanitizeForScanning(format, format_sanitized, IM_COUNTOF(format_sanitized));
+        if (format[0] == '\0')
+            format = type_info->ScanFmt; // Format doesn't want us to show the number currently, but we still need to parse the resulting input
+    }
 
     // Small types need a 32-bit buffer to receive the result from scanf()
     int v32 = 0;
@@ -5642,7 +5647,7 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
         ImVec2 cursor_screen_pos = ImTrunc(draw_pos + cursor_offset - draw_scroll);
         ImRect cursor_screen_rect(cursor_screen_pos.x, cursor_screen_pos.y - g.FontSize + 0.5f, cursor_screen_pos.x + 1.0f, cursor_screen_pos.y - 1.5f);
         if (cursor_is_visible && cursor_screen_rect.Overlaps(clip_rect))
-            draw_window->DrawList->AddLine(cursor_screen_rect.Min, cursor_screen_rect.GetBL(), GetColorU32(ImGuiCol_InputTextCursor), 1.0f * (float)(int)style._MainScale); // FIXME-DPI: Cursor thickness (#7031)
+            draw_window->DrawList->AddLineV(cursor_screen_rect.Min.x, cursor_screen_rect.Min.y, cursor_screen_rect.Max.y, GetColorU32(ImGuiCol_InputTextCursor), 1.0f * (float)(int)style._MainScale); // FIXME-DPI: Cursor thickness (#7031)
 
         // Notify OS of text input position for advanced IME (-1 x offset so that Windows IME can cover our cursor. Bit of an extra nicety.)
         // This is required for some backends (SDL3) to start emitting character/text inputs.
@@ -6356,7 +6361,7 @@ bool ImGui::ColorPicker4(const char* label, float col[4], ImGuiColorEditFlags fl
             const float a1 = (n+1.0f)/6.0f * 2.0f * IM_PI + aeps;
             const int vert_start_idx = draw_list->VtxBuffer.Size;
             draw_list->PathArcTo(wheel_center, (wheel_r_inner + wheel_r_outer)*0.5f, a0, a1, segment_per_arc);
-            draw_list->PathStroke(col_white, 0, wheel_thickness);
+            draw_list->PathStroke(col_white, wheel_thickness);
             const int vert_end_idx = draw_list->VtxBuffer.Size;
 
             // Paint colors over existing vertices
@@ -6500,7 +6505,7 @@ bool ImGui::ColorButton(const char* desc_id, const ImVec4& col, ImGuiColorEditFl
         if (g.Style.FrameBorderSize > 0.0f)
             RenderFrameBorder(bb.Min, bb.Max, rounding);
         else
-            window->DrawList->AddRect(bb.Min, bb.Max, GetColorU32(ImGuiCol_FrameBg), rounding, 0, 1.0f * (float)(int)g.Style._MainScale); // Color buttons are often in need of some sort of border // FIXME-DPI
+            window->DrawList->AddRect(bb.Min, bb.Max, GetColorU32(ImGuiCol_FrameBg), rounding, 1.0f * (float)(int)g.Style._MainScale); // Color buttons are often in need of some sort of border // FIXME-DPI
     }
 
     // Drag and Drop Source
@@ -7173,11 +7178,11 @@ void ImGui::TreeNodeDrawLineToChildNode(const ImVec2& target_pos)
         window->DrawList->PathArcToFast(ImVec2(x1, y - rounding), rounding, 6, 3);
         if (x1 < x2)
             window->DrawList->PathLineTo(ImVec2(x2, y));
-        window->DrawList->PathStroke(GetColorU32(ImGuiCol_TreeLines), ImDrawFlags_None, g.Style.TreeLinesSize);
+        window->DrawList->PathStroke(GetColorU32(ImGuiCol_TreeLines), g.Style.TreeLinesSize);
     }
     else
     {
-        window->DrawList->AddLine(ImVec2(x1, y), ImVec2(x2, y), GetColorU32(ImGuiCol_TreeLines), g.Style.TreeLinesSize);
+        window->DrawList->AddLineH(x1, x2, y, GetColorU32(ImGuiCol_TreeLines), g.Style.TreeLinesSize);
     }
 }
 
@@ -7203,7 +7208,7 @@ void ImGui::TreeNodeDrawLineToTreePop(const ImGuiTreeNodeStackData* data)
     float x = ImTrunc(data->DrawLinesX1);
     if (data->DrawLinesTableColumn != -1)
         TablePushColumnChannel(data->DrawLinesTableColumn);
-    window->DrawList->AddLine(ImVec2(x, y1), ImVec2(x, y2), GetColorU32(ImGuiCol_TreeLines), g.Style.TreeLinesSize);
+    window->DrawList->AddLineV(x, y1, y2, GetColorU32(ImGuiCol_TreeLines), g.Style.TreeLinesSize);
     if (data->DrawLinesTableColumn != -1)
         TablePopColumnChannel();
 }
@@ -8376,11 +8381,23 @@ void ImGui::MultiSelectItemFooter(ImGuiID id, bool* p_selected, bool* p_pressed)
                 if (ImGuiTable* table = g.CurrentTable)
                     if (table->CurrentColumn != -1)
                     {
-                        // FIXME: We cannot use current ClipRect as it includes HostClipRect.
-                        // A more generic version would be nice, but window->WorkRect.Min/Max exclude CellPadding. (#7994)
+                        // FIXME: We cannot solely use current ClipRect as it includes HostClipRect.
+                        // However we account for ClipRect being larger than current column (e.g. when using SpanAllColumns)
+                        // A more generic version would be nice, but window->WorkRect.Min/Max exclude CellPadding. (#7994, #9383)
                         ImGuiTableColumn* column = &table->Columns[table->CurrentColumn];
-                        item_rect.Min.x = ImMax(item_rect.Min.x, column->MinX);
-                        item_rect.Max.x = ImMin(item_rect.Max.x, column->MaxX);
+                        float clip_min_x = (g.LastItemData.ItemFlags & ImGuiItemStatusFlags_HasClipRect) ? g.LastItemData.ClipRect.Min.x : window->ClipRect.Min.x;
+                        float clip_max_x = (g.LastItemData.ItemFlags & ImGuiItemStatusFlags_HasClipRect) ? g.LastItemData.ClipRect.Max.x : window->ClipRect.Max.x;
+                        if (clip_min_x != clip_max_x) // When zero sized we expect that bounds have been clamped and thus are unreliable
+                        {
+                            item_rect.Min.x = ImMax(item_rect.Min.x, ImMin(column->MinX, clip_min_x));
+                            item_rect.Max.x = ImMin(item_rect.Max.x, ImMax(column->MaxX, clip_max_x));
+                        }
+                        else
+                        {
+                            item_rect.Min.x = ImMax(item_rect.Min.x, column->MinX);
+                            item_rect.Max.x = ImMin(item_rect.Max.x, column->MaxX);
+                        }
+                        //GetForegroundDrawList()->AddRect(item_rect.Min, item_rect.Max, IM_COL32(255, 0, 255, 255));
                     }
             const bool rect_overlap_curr = bs->BoxSelectRectCurr.Overlaps(item_rect);
             const bool rect_overlap_prev = bs->BoxSelectRectPrev.Overlaps(item_rect);
@@ -10876,7 +10893,7 @@ bool    ImGui::TabItemEx(ImGuiTabBar* tab_bar, const char* label, bool* p_open, 
                 float rounding = style.TabRounding;
                 display_draw_list->PathArcToFast(tl + ImVec2(+rounding, +rounding), rounding, 7, 9);
                 display_draw_list->PathArcToFast(tr + ImVec2(-rounding, +rounding), rounding, 9, 11);
-                display_draw_list->PathStroke(overline_col, 0, style.TabBarOverlineSize);
+                display_draw_list->PathStroke(overline_col, style.TabBarOverlineSize);
             }
             else
             {
@@ -10994,7 +11011,7 @@ void ImGui::TabItemBackground(ImDrawList* draw_list, const ImRect& bb, ImGuiTabI
         draw_list->PathArcToFast(ImVec2(bb.Min.x + rounding + 0.5f, y1 + rounding + 0.5f), rounding, 6, 9);
         draw_list->PathArcToFast(ImVec2(bb.Max.x - rounding - 0.5f, y1 + rounding + 0.5f), rounding, 9, 12);
         draw_list->PathLineTo(ImVec2(bb.Max.x - 0.5f, y2));
-        draw_list->PathStroke(GetColorU32(ImGuiCol_Border), 0, g.Style.TabBorderSize);
+        draw_list->PathStroke(GetColorU32(ImGuiCol_Border), g.Style.TabBorderSize);
     }
 }
 

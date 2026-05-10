@@ -3526,7 +3526,7 @@ namespace ImGui
     IMGUI_API void          SetNextWindowRefreshPolicy(ImGuiWindowRefreshFlags flags);
 
     // Fonts, drawing
-    IMGUI_API void          RegisterUserTexture(ImTextureData* tex); // Register external texture. EXPERIMENTAL: DO NOT USE YET.
+    IMGUI_API void          RegisterUserTexture(ImTextureData* tex); // Register external texture. EXPERIMENTAL.
     IMGUI_API void          UnregisterUserTexture(ImTextureData* tex);
     IMGUI_API void          RegisterFontAtlas(ImFontAtlas* atlas);
     IMGUI_API void          UnregisterFontAtlas(ImFontAtlas* atlas);
@@ -3863,7 +3863,7 @@ namespace ImGui
     IMGUI_API void          ClearDragDrop();
     IMGUI_API bool          IsDragDropPayloadBeingAccepted();
     IMGUI_API void          RenderDragDropTargetRectForItem(const ImRect& bb);
-    IMGUI_API void          RenderDragDropTargetRectEx(ImDrawList* draw_list, const ImRect& bb);
+    IMGUI_API void          RenderDragDropTargetRectEx(ImDrawList* draw_list, const ImRect& bb, float rounding);
 
     // Typing-Select API
     // (provide Windows Explorer style "select items by typing partial name" + "cycle through items by typing same letter" feature)
@@ -4351,6 +4351,7 @@ IMGUI_API void              ImFontAtlasTextureBlockFill(ImTextureData* dst_tex, 
 IMGUI_API void              ImFontAtlasTextureBlockCopy(ImTextureData* src_tex, int src_x, int src_y, ImTextureData* dst_tex, int dst_x, int dst_y, int w, int h);
 IMGUI_API void              ImFontAtlasTextureBlockQueueUpload(ImFontAtlas* atlas, ImTextureData* tex, int x, int y, int w, int h);
 
+IMGUI_API void              ImTextureDataQueueUpload(ImTextureData* tex, int x, int y, int w, int h);
 IMGUI_API int               ImTextureDataGetFormatBytesPerPixel(ImTextureFormat format);
 IMGUI_API const char*       ImTextureDataGetStatusName(ImTextureStatus status);
 IMGUI_API const char*       ImTextureDataGetFormatName(ImTextureFormat format);

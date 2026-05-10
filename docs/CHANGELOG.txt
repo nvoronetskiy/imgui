@@ -45,6 +45,27 @@ Breaking Changes:
   - Obsoleted `ImDrawCallback_ResetRenderState` in favor of using `ImGui::GetPlatformIO().DrawCallback_ResetRenderState`,
     which is part of our new standard draw callbacks. (#9378)
     Redirecting the earlier value into the later one when set, so both old and new code should work.
+- DrawList: swapped the last two arguments of AddRect(), AddPolyline(), PathStroke().
+  Recap:
+   - Before: `void ImDrawList::AddRect(ImVec2 p_min, ImVec2 p_max, ImU32 col, float rounding = 0.0f, ImDrawFlags flags = 0, float thickness = 1.0f);`
+   - After:  `void ImDrawList::AddRect(ImVec2 p_min, ImVec2 p_max, ImU32 col, float rounding = 0.0f, float thickness = 1.0f, ImDrawFlags flags = 0);`
+   - Before: `void ImDrawList::AddPolyline(const ImVec2* points, int num_points, ImU32 col, ImDrawFlags flags, float thickness);`
+   - After:  `void ImDrawList::AddPolyline(const ImVec2* points, int num_points, ImU32 col, float thickness, ImDrawFlags flags = 0);`
+   - Before: `void ImDrawList::PathStroke(ImU32 col, ImDrawFlags flags = 0, float thickness = 1.0f);`
+   - After:  `void ImDrawList::PathStroke(ImU32 col, float thickness = 1.0f, ImDrawFlags flags = 0);`
+  Added inline redirection functions when IMGUI_DISABLE_OBSOLETE_FUNCTIONS is off.
+  Marked the old functions are =delete when IMGUI_DISABLE_OBSOLETE_FUNCTIONS is on, to allow for better type-checking.
+  This is not an easy change but it makes ImDrawList function signatures consistent.
+  As we are aiming to add flags and features to variety of ImDrawList functions, that consistency will become particularly important.
+  The new order is also more convenient as `flags` are less frequently used than `thickness` in real code.
+  Effectively the typical call site is changing from:
+   - Before: `window->DrawList->AddRect(p_min, p_max, color, rounding, ImDrawFlags_None, border_size);`
+   - After:  `window->DrawList->AddRect(p_min, p_max, color, rounding, border_size);`
+  Notes:
+   - As a general policy in Dear ImGui, all our flags default to 0 so ImDrawFlags_None was likely written 0 in some call sites.
+   - Users of C++ and other languages with type-checking will be notified at compile-time of any mistakes.
+   - Users of high-level bindings or languages with no type-checking will be notified at runtime via an assert for invalid flags value.
+   - Consider adding `#define IMGUI_DISABLE_OBSOLETE_FUNCTIONS` in your imconfig.h, even temporarily, to clean up legacy code.
 - Backends:
   - Vulkan: redesigned to use separate ImageView + Sampler instead of Combined Image Sampler. (#914)
     This change allows us to facilitate changing samplers, in line with other backends. [@yaz0r, @ocornut]
@@ -74,6 +95,7 @@ Other Changes:
     (#9378, #9371, #3590, #8926, #2973, #7485, #7468, #6969, #5118, #7616, #9173, #8322, #7230,
     #5999, #6452, #5156, #7342, #7592, #7511)
   - Made AddCallback() user data default to Null for convenience.
+  - Added AddLineH(), AddLineV() helpers to draw horizontal and vertical lines. [@memononen]
 - InputText:
   - InputTextMultiline: fixed an issue processing deactivation logic when an active
     multi-line edit is clipped due to being out of view.
@@ -97,6 +119,8 @@ Other Changes:
     with 1.91.4 behavior.
   - In a majority of cases you should use IsItemDeactivatedAfterEdit() instead,
     but it still has a few edge cases flaws (to be addressed soon).
+- InputInt, InputFloat, InputScalar: allow passing a format string that does not display
+  the scalar value. Parsing input with default format for the type. (#9385) [@FireFox2000000]
 - Multi-Select:
   - Fixed an issue using Multi-Select within a Table causing column width measurement to
     be invalid when trailing column contents is not submitted in the last row. (#9341, #8250)
@@ -129,6 +153,7 @@ Other Changes:
 - Style:
   - Fixed vertical scrollbar top coordinates when using thick borders on windows
     with no title bar and no menu bar. (#9366)
+  - Added ImGuiStyleVar_DragDropTargetRounding. (#9056)
 - Fonts:
   - imgui_freetype: add FreeType headers & compiled version in 'About Dear ImGui' details.
   - Assert when using MergeMode with an explicit size over a target font with an implicit
@@ -148,7 +173,7 @@ Other Changes:
     - DX10:         Reset     SetSamplerLinear  SetSamplerNearest
     - DX11:         Reset     SetSamplerLinear  SetSamplerNearest
     - DX12:         Reset     SetSamplerLinear  SetSamplerNearest
-    - Metal:        Reset     *missing*         *missing*
+    - Metal:        Reset     SetSamplerLinear  SetSamplerNearest
     - OpenGL2:      Reset     SetSamplerLinear  SetSamplerNearest
     - OpenGL3+:     Reset     SetSamplerLinear  SetSamplerNearest
     - SDLGPU3:      Reset     SetSamplerLinear  SetSamplerNearest
@@ -156,7 +181,7 @@ Other Changes:
     - SDLRenderer3: Reset     SetSamplerLinear  SetSamplerNearest
     - Vulkan:       Reset     SetSamplerLinear  SetSamplerNearest
     - WebGPU:       Reset     SetSamplerLinear  SetSamplerNearest
-    (Vulkan backend by @yaz0r, others by @ocornut)
+    (Vulkan backend by @yaz0r, Metal by @ssh4net, others by @ocornut)
   - GLFW: added a Win32-specific implementation of `ImGui_ImplGlfw_GetContentScaleXXXX`
     functions for legacy GLFW 3.2. (#9003)
   - Metal: avoid redundant vertex buffer bind in `SetupRenderState()`, which leads
@@ -173,7 +198,6 @@ Other Changes:
   - GLFW+Vulkan, SDL2+Vulkan, SDL3+Vulkan, Win32+Vulkan: reworked to create a descriptor pool with:
     - IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE descriptors of type VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE.
     - IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE       descriptors of type VK_DESCRIPTOR_TYPE_SAMPLER.
-
 
 Docking+Viewports Branch:
 
@@ -930,6 +954,9 @@ Docking+Viewports Branch:
   - Fixed a bug where ImGuiWindowFlags_NoBringToFrontOnFocus would effectively
     be ignored when windows first appear and viewports are enabled. (#7008) [@jshofmann]
   - Changed default value of io.ConfigViewportsNoDefaultParent to true. (#8948)
+    As a reminder, for backend honoring ParentViewportID:
+    - Parented windows will always appear in front of the main viewport.
+    - Non-parented windows can appear behing the main viewport.
   - Fixed an issue inferring Z-order when attempting to merge a viewport
     back in the the main/hosting viewport. (#8948)
     Note that for GLFW/SDL2/OSX backends, which do not support honoring ParentViewportID.

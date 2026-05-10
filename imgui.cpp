@@ -402,7 +402,27 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
                             you may use GetMainViewport()->Pos to offset hard-coded positions, e.g. SetNextWindowPos(GetMainViewport()->Pos)
                           - likewise io.MousePos and GetMousePos() will use OS coordinates.
                             If you query mouse positions to interact with non-imgui coordinates you will need to offset them, e.g. subtract GetWindowViewport()->Pos.
-
+ - 2026/05/07 (1.92.8) - DrawList: swapped the last two arguments of AddRect(), AddPolyline(), PathStroke().
+                         Recap:
+                         - Before: void ImDrawList::AddRect(ImVec2 p_min, ImVec2 p_max, ImU32 col, float rounding = 0.0f, ImDrawFlags flags = 0, float thickness = 1.0f);
+                         - After:  void ImDrawList::AddRect(ImVec2 p_min, ImVec2 p_max, ImU32 col, float rounding = 0.0f, float thickness = 1.0f, ImDrawFlags flags = 0);
+                         - Before: void ImDrawList::AddPolyline(const ImVec2* points, int num_points, ImU32 col, ImDrawFlags flags, float thickness);
+                         - After:  void ImDrawList::AddPolyline(const ImVec2* points, int num_points, ImU32 col, float thickness, ImDrawFlags flags = 0);
+                         - Before: void ImDrawList::PathStroke(ImU32 col, ImDrawFlags flags = 0, float thickness = 1.0f);
+                         - After:  void ImDrawList::PathStroke(ImU32 col, float thickness = 1.0f, ImDrawFlags flags = 0);
+                         Added inline redirection functions when IMGUI_DISABLE_OBSOLETE_FUNCTIONS is off.
+                         Marked the old functions are =delete when IMGUI_DISABLE_OBSOLETE_FUNCTIONS is on, to allow for better type-checking.
+                         This is not an easy change but it makes ImDrawList function signatures consistent.
+                         As we are aiming to add flags and features to variety of ImDrawList functions, that consistency will become particularly important.
+                         The new order is also more convenient as 'flags' are less frequently used than 'thickness' in real code.
+                         Effectively the typical call site is changing from:
+                           - Before:  window->DrawList->AddRect(p_min, p_max, color, rounding, ImDrawFlags_None, border_size);
+                           - After:   window->DrawList->AddRect(p_min, p_max, color, rounding, border_size);
+                         Notes:
+                         - As a general policy in Dear ImGui, all our flags default to 0 so ImDrawFlags_None was likely written 0 in some call sites.
+                         - Users of C++ and other languages with type-checking should be notified at compile-time of any mistakes.
+                         - Users of high-level bindings or languages with no type-checking will be notified at runtime via an assert for invalid flags value.
+                         - Consider adding `#define IMGUI_DISABLE_OBSOLETE_FUNCTIONS` in your imconfig.h, even temporarily, to clean up legacy code.
  - 2026/04/23 (1.92.8) - Obsoleted `ImDrawCallback_ResetRenderState` in favor of using `ImGui::GetPlatformIO().DrawCallback_ResetRenderState`, which is part of our new standard draw callbacks. (#9378)
  - 2026/04/22 (1.92.8) - Backends: Vulkan: redesigned to use separate ImageView + Sampler instead of Combined Image Sampler.
                          - When registering custom textures: changed ImGui_ImplVulkan_AddTexture() signature to remove Sampler.
@@ -3759,6 +3779,7 @@ static const ImGuiStyleVarInfo GStyleVarsInfo[] =
     { 2, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TableAngledHeadersTextAlign)},// ImGuiStyleVar_TableAngledHeadersTextAlign
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TreeLinesSize)},              // ImGuiStyleVar_TreeLinesSize
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, TreeLinesRounding)},          // ImGuiStyleVar_TreeLinesRounding
+    { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, DragDropTargetRounding)},     // ImGuiStyleVar_DragDropTargetRounding
     { 2, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, ButtonTextAlign) },           // ImGuiStyleVar_ButtonTextAlign
     { 2, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, SelectableTextAlign) },       // ImGuiStyleVar_SelectableTextAlign
     { 1, ImGuiDataType_Float, (ImU32)offsetof(ImGuiStyle, SeparatorSize)},              // ImGuiStyleVar_SeparatorSize
@@ -4046,8 +4067,8 @@ void ImGui::RenderTextEllipsis(ImDrawList* draw_list, const ImVec2& pos_min, con
         text_end_full = FindRenderedTextEnd(text);
     const ImVec2 text_size = text_size_if_known ? *text_size_if_known : CalcTextSize(text, text_end_full, false, 0.0f);
 
-    //draw_list->AddLine(ImVec2(pos_max.x, pos_min.y - 4), ImVec2(pos_max.x, pos_max.y + 6), IM_COL32(0, 0, 255, 255));
-    //draw_list->AddLine(ImVec2(ellipsis_max_x, pos_min.y - 2), ImVec2(ellipsis_max_x, pos_max.y + 3), IM_COL32(0, 255, 0, 255));
+    //draw_list->AddLineV(pos_max.x, pos_min.y - 4, pos_max.y + 6, IM_COL32(0, 0, 255, 255));
+    //draw_list->AddLineV(ellipsis_max_x, pos_min.y - 2, pos_max.y + 3, IM_COL32(0, 255, 0, 255));
 
     // FIXME: We could technically remove (last_glyph->AdvanceX - last_glyph->X1) from text_size.x here and save a few pixels.
     if (text_size.x > pos_max.x - pos_min.x)
@@ -4092,8 +4113,8 @@ void ImGui::RenderFrame(ImVec2 p_min, ImVec2 p_max, ImU32 fill_col, bool borders
     const float border_size = g.Style.FrameBorderSize;
     if (borders && border_size > 0.0f)
     {
-        window->DrawList->AddRect(p_min + ImVec2(1, 1), p_max + ImVec2(1, 1), GetColorU32(ImGuiCol_BorderShadow), rounding, 0, border_size);
-        window->DrawList->AddRect(p_min, p_max, GetColorU32(ImGuiCol_Border), rounding, 0, border_size);
+        window->DrawList->AddRect(p_min + ImVec2(1, 1), p_max + ImVec2(1, 1), GetColorU32(ImGuiCol_BorderShadow), rounding, border_size);
+        window->DrawList->AddRect(p_min, p_max, GetColorU32(ImGuiCol_Border), rounding, border_size);
     }
 }
 
@@ -4104,8 +4125,8 @@ void ImGui::RenderFrameBorder(ImVec2 p_min, ImVec2 p_max, float rounding)
     const float border_size = g.Style.FrameBorderSize;
     if (border_size > 0.0f)
     {
-        window->DrawList->AddRect(p_min + ImVec2(1, 1), p_max + ImVec2(1, 1), GetColorU32(ImGuiCol_BorderShadow), rounding, 0, border_size);
-        window->DrawList->AddRect(p_min, p_max, GetColorU32(ImGuiCol_Border), rounding, 0, border_size);
+        window->DrawList->AddRect(p_min + ImVec2(1, 1), p_max + ImVec2(1, 1), GetColorU32(ImGuiCol_BorderShadow), rounding, border_size);
+        window->DrawList->AddRect(p_min, p_max, GetColorU32(ImGuiCol_Border), rounding, border_size);
     }
 }
 
@@ -4140,7 +4161,7 @@ void ImGui::RenderNavCursor(const ImRect& bb, ImGuiID id, ImGuiNavRenderCursorFl
     const float thickness = 2.0f;
     if (flags & ImGuiNavRenderCursorFlags_Compact)
     {
-        window->DrawList->AddRect(display_rect.Min, display_rect.Max, GetColorU32(ImGuiCol_NavCursor), rounding, 0, thickness);
+        window->DrawList->AddRect(display_rect.Min, display_rect.Max, GetColorU32(ImGuiCol_NavCursor), rounding, thickness);
     }
     else
     {
@@ -4149,7 +4170,7 @@ void ImGui::RenderNavCursor(const ImRect& bb, ImGuiID id, ImGuiNavRenderCursorFl
         bool fully_visible = window->ClipRect.Contains(display_rect);
         if (!fully_visible)
             window->DrawList->PushClipRect(display_rect.Min, display_rect.Max);
-        window->DrawList->AddRect(display_rect.Min, display_rect.Max, GetColorU32(ImGuiCol_NavCursor), rounding, 0, thickness);
+        window->DrawList->AddRect(display_rect.Min, display_rect.Max, GetColorU32(ImGuiCol_NavCursor), rounding, thickness);
         if (!fully_visible)
             window->DrawList->PopClipRect();
     }
@@ -4183,7 +4204,7 @@ void ImGui::RenderMouseCursor(ImVec2 base_pos, float base_scale, ImGuiMouseCurso
             float a_min = ImFmod((float)g.Time * 5.0f, 2.0f * IM_PI);
             float a_max = a_min + IM_PI * 1.65f;
             draw_list->PathArcTo(pos + ImVec2(14, -1) * scale, 6.0f * scale, a_min, a_max);
-            draw_list->PathStroke(col_fill, ImDrawFlags_None, 3.0f * scale);
+            draw_list->PathStroke(col_fill, 3.0f * scale);
         }
         draw_list->PopTexture();
     }
@@ -5099,7 +5120,7 @@ bool ImGui::ItemHoverable(const ImRect& bb, ImGuiID id, ImGuiItemFlags item_flag
     {
         g.HoveredIdPreviousFrameItemCount++;
         if (g.DebugDrawIdConflictsId == id)
-            window->DrawList->AddRect(bb.Min - ImVec2(1,1), bb.Max + ImVec2(1,1), IM_COL32(255, 0, 0, 255), 0.0f, ImDrawFlags_None, 2.0f);
+            window->DrawList->AddRect(bb.Min - ImVec2(1,1), bb.Max + ImVec2(1,1), IM_COL32(255, 0, 0, 255), 0.0f, 2.0f);
     }
 #endif
 
@@ -6247,7 +6268,7 @@ static void ImGui::RenderDimmedBackgrounds()
         if (window->DrawList->CmdBuffer.Size == 0)
             window->DrawList->AddDrawCmd();
         window->DrawList->PushClipRect(viewport->Pos, viewport->Pos + viewport->Size);
-        window->DrawList->AddRect(bb.Min, bb.Max, GetColorU32(ImGuiCol_NavWindowingHighlight, g.NavWindowingHighlightAlpha), window->WindowRounding, 0, 3.0f); // FIXME-DPI
+        window->DrawList->AddRect(bb.Min, bb.Max, GetColorU32(ImGuiCol_NavWindowingHighlight, g.NavWindowingHighlightAlpha), window->WindowRounding, 3.0f); // FIXME-DPI
         window->DrawList->PopClipRect();
     }
 
@@ -7495,7 +7516,7 @@ static void RenderWindowOuterSingleBorder(ImGuiWindow* window, int border_n, ImU
     const ImRect border_r = GetResizeBorderRect(window, border_n, rounding, 0.0f);
     window->DrawList->PathArcTo(ImLerp(border_r.Min, border_r.Max, def.SegmentN1) + ImVec2(0.5f, 0.5f) + def.InnerDir * rounding, rounding, def.OuterAngle - IM_PI * 0.25f, def.OuterAngle);
     window->DrawList->PathArcTo(ImLerp(border_r.Min, border_r.Max, def.SegmentN2) + ImVec2(0.5f, 0.5f) + def.InnerDir * rounding, rounding, def.OuterAngle, def.OuterAngle + IM_PI * 0.25f);
-    window->DrawList->PathStroke(border_col, ImDrawFlags_None, border_size);
+    window->DrawList->PathStroke(border_col, border_size);
 }
 
 static void ImGui::RenderWindowOuterBorders(ImGuiWindow* window)
@@ -7504,7 +7525,7 @@ static void ImGui::RenderWindowOuterBorders(ImGuiWindow* window)
     const float border_size = window->WindowBorderSize;
     const ImU32 border_col = GetColorU32(ImGuiCol_Border);
     if (border_size > 0.0f && (window->Flags & ImGuiWindowFlags_NoBackground) == 0)
-        window->DrawList->AddRect(window->Pos, window->Pos + window->Size, border_col, window->WindowRounding, 0, window->WindowBorderSize);
+        window->DrawList->AddRect(window->Pos, window->Pos + window->Size, border_col, window->WindowRounding, window->WindowBorderSize);
     else if (border_size > 0.0f)
     {
         if (window->ChildFlags & ImGuiChildFlags_ResizeX) // Similar code as 'resize_border_mask' computation in UpdateWindowManualResize() but we specifically only always draw explicit child resize border.
@@ -7521,7 +7542,7 @@ static void ImGui::RenderWindowOuterBorders(ImGuiWindow* window)
     if (g.Style.FrameBorderSize > 0 && !(window->Flags & ImGuiWindowFlags_NoTitleBar) && !window->DockIsActive)
     {
         float y = window->Pos.y + window->TitleBarHeight - 1;
-        window->DrawList->AddLine(ImVec2(window->Pos.x + border_size * 0.5f, y), ImVec2(window->Pos.x + window->Size.x - border_size * 0.5f, y), border_col, g.Style.FrameBorderSize);
+        window->DrawList->AddLineH(window->Pos.x + border_size * 0.5f, window->Pos.x + window->Size.x - border_size * 0.5f, y, border_col, g.Style.FrameBorderSize);
     }
 }
 
@@ -7631,7 +7652,7 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
             menu_bar_rect.ClipWith(window->Rect());  // Soft clipping, in particular child window don't have minimum size covering the menu bar so this is useful for them.
             window->DrawList->AddRectFilled(menu_bar_rect.Min, menu_bar_rect.Max, GetColorU32(ImGuiCol_MenuBarBg), (flags & ImGuiWindowFlags_NoTitleBar) ? window_rounding : 0.0f, ImDrawFlags_RoundCornersTop);
             if (style.FrameBorderSize > 0.0f && menu_bar_rect.Max.y < window->Pos.y + window->Size.y)
-                window->DrawList->AddLine(menu_bar_rect.GetBL() + ImVec2(window_border_size * 0.5f, 0.0f), menu_bar_rect.GetBR() - ImVec2(window_border_size * 0.5f, 0.0f), GetColorU32(ImGuiCol_Border), style.FrameBorderSize);
+                window->DrawList->AddLineH(menu_bar_rect.Min.x + window_border_size * 0.5f, menu_bar_rect.Max.x - window_border_size * 0.5f, menu_bar_rect.Max.y, GetColorU32(ImGuiCol_Border), style.FrameBorderSize);
         }
 
         // Docking: Unhide tab bar (small triangle in the corner), drag from small triangle to quickly undock
@@ -9697,7 +9718,7 @@ ImFont* ImGui::GetDefaultFont()
     return g.IO.FontDefault ? g.IO.FontDefault : atlas->Fonts[0];
 }
 
-// EXPERIMENTAL: DO NOT USE YET.
+// EXPERIMENTAL. Use ImTextureDataQueueUpload() to queue updates.
 void ImGui::RegisterUserTexture(ImTextureData* tex)
 {
     ImGuiContext& g = *GImGui;
@@ -16617,7 +16638,7 @@ const ImGuiPayload* ImGui::AcceptDragDropPayload(const char* type, ImGuiDragDrop
         IM_ASSERT(viewport != NULL);
         ImRect bb = g.DragDropTargetRect;
         bb.Expand(-3.5f);
-        RenderDragDropTargetRectEx(GetForegroundDrawList(viewport), bb);
+        RenderDragDropTargetRectEx(GetForegroundDrawList(viewport), bb, g.Style.DragDropTargetRounding);
     }
     else if (draw_target_rect)
     {
@@ -16648,16 +16669,16 @@ void ImGui::RenderDragDropTargetRectForItem(const ImRect& bb)
     bool push_clip_rect = !window->ClipRect.Contains(bb_display);
     if (push_clip_rect)
         window->DrawList->PushClipRectFullScreen();
-    RenderDragDropTargetRectEx(window->DrawList, bb_display);
+    RenderDragDropTargetRectEx(window->DrawList, bb_display, g.Style.DragDropTargetRounding);
     if (push_clip_rect)
         window->DrawList->PopClipRect();
 }
 
-void ImGui::RenderDragDropTargetRectEx(ImDrawList* draw_list, const ImRect& bb)
+void ImGui::RenderDragDropTargetRectEx(ImDrawList* draw_list, const ImRect& bb, float rounding)
 {
     ImGuiContext& g = *GImGui;
-    draw_list->AddRectFilled(bb.Min, bb.Max, GetColorU32(ImGuiCol_DragDropTargetBg), g.Style.DragDropTargetRounding, 0);
-    draw_list->AddRect(bb.Min, bb.Max, GetColorU32(ImGuiCol_DragDropTarget), g.Style.DragDropTargetRounding, 0, g.Style.DragDropTargetBorderSize);
+    draw_list->AddRectFilled(bb.Min, bb.Max, GetColorU32(ImGuiCol_DragDropTargetBg), rounding, 0);
+    draw_list->AddRect(bb.Min, bb.Max, GetColorU32(ImGuiCol_DragDropTarget), rounding, g.Style.DragDropTargetBorderSize);
 }
 
 const ImGuiPayload* ImGui::GetDragDropPayload()
@@ -22803,7 +22824,7 @@ void ImGui::DebugRenderKeyboardPreview(ImDrawList* draw_list)
         draw_list->AddRect(key_min, key_max, IM_COL32(24, 24, 24, 255), key_rounding);
         ImVec2 face_min = ImVec2(key_min.x + key_face_pos.x, key_min.y + key_face_pos.y);
         ImVec2 face_max = ImVec2(face_min.x + key_face_size.x, face_min.y + key_face_size.y);
-        draw_list->AddRect(face_min, face_max, IM_COL32(193, 193, 193, 255), key_face_rounding, ImDrawFlags_None, 2.0f);
+        draw_list->AddRect(face_min, face_max, IM_COL32(193, 193, 193, 255), key_face_rounding, 2.0f);
         draw_list->AddRectFilled(face_min, face_max, IM_COL32(252, 252, 252, 255), key_face_rounding);
         ImVec2 label_min = ImVec2(key_min.x + key_label_pos.x, key_min.y + key_label_pos.y);
         draw_list->AddText(label_min, IM_COL32(64, 64, 64, 255), key_data->Label);
@@ -23226,7 +23247,7 @@ void ImGui::ShowMetricsWindow(bool* p_open)
 
                 BulletText("Table 0x%08X (%d columns, in '%s')", table->ID, table->ColumnsCount, table->OuterWindow->Name);
                 if (IsItemHovered())
-                    GetForegroundDrawList(table->OuterWindow)->AddRect(table->OuterRect.Min - ImVec2(1, 1), table->OuterRect.Max + ImVec2(1, 1), IM_COL32(255, 255, 0, 255), 0.0f, 0, 2.0f);
+                    GetForegroundDrawList(table->OuterWindow)->AddRect(table->OuterRect.Min - ImVec2(1, 1), table->OuterRect.Max + ImVec2(1, 1), IM_COL32(255, 255, 0, 255), 0.0f, 2.0f);
                 Indent();
                 char buf[128];
                 for (int rect_n = 0; rect_n < TRT_Count; rect_n++)
@@ -23241,7 +23262,7 @@ void ImGui::ShowMetricsWindow(bool* p_open)
                             ImFormatString(buf, IM_COUNTOF(buf), "(%6.1f,%6.1f) (%6.1f,%6.1f) Size (%6.1f,%6.1f) Col %d %s", r.Min.x, r.Min.y, r.Max.x, r.Max.y, r.GetWidth(), r.GetHeight(), column_n, trt_rects_names[rect_n]);
                             Selectable(buf);
                             if (IsItemHovered())
-                                GetForegroundDrawList(table->OuterWindow)->AddRect(r.Min - ImVec2(1, 1), r.Max + ImVec2(1, 1), IM_COL32(255, 255, 0, 255), 0.0f, 0, 2.0f);
+                                GetForegroundDrawList(table->OuterWindow)->AddRect(r.Min - ImVec2(1, 1), r.Max + ImVec2(1, 1), IM_COL32(255, 255, 0, 255), 0.0f, 2.0f);
                         }
                     }
                     else
@@ -23250,7 +23271,7 @@ void ImGui::ShowMetricsWindow(bool* p_open)
                         ImFormatString(buf, IM_COUNTOF(buf), "(%6.1f,%6.1f) (%6.1f,%6.1f) Size (%6.1f,%6.1f) %s", r.Min.x, r.Min.y, r.Max.x, r.Max.y, r.GetWidth(), r.GetHeight(), trt_rects_names[rect_n]);
                         Selectable(buf);
                         if (IsItemHovered())
-                            GetForegroundDrawList(table->OuterWindow)->AddRect(r.Min - ImVec2(1, 1), r.Max + ImVec2(1, 1), IM_COL32(255, 255, 0, 255), 0.0f, 0, 2.0f);
+                            GetForegroundDrawList(table->OuterWindow)->AddRect(r.Min - ImVec2(1, 1), r.Max + ImVec2(1, 1), IM_COL32(255, 255, 0, 255), 0.0f, 2.0f);
                     }
                 }
                 Unindent();
@@ -23738,7 +23759,7 @@ void ImGui::ShowMetricsWindow(bool* p_open)
                     ImRect r = Funcs::GetTableRect(table, cfg->ShowTablesRectsType, column_n);
                     ImU32 col = (table->HoveredColumnBody == column_n) ? IM_COL32(255, 255, 128, 255) : IM_COL32(255, 0, 128, 255);
                     float thickness = (table->HoveredColumnBody == column_n) ? 3.0f : 1.0f;
-                    draw_list->AddRect(r.Min, r.Max, col, 0.0f, 0, thickness);
+                    draw_list->AddRect(r.Min, r.Max, col, 0.0f, thickness);
                 }
             }
             else
@@ -24015,7 +24036,7 @@ void ImGui::DebugNodeDrawList(ImGuiWindow* window, ImGuiViewportP* viewport, con
                 {
                     ImDrawListFlags backup_flags = fg_draw_list->Flags;
                     fg_draw_list->Flags &= ~ImDrawListFlags_AntiAliasedLines; // Disable AA on triangle outlines is more readable for very large and thin triangles.
-                    fg_draw_list->AddPolyline(triangle, 3, IM_COL32(255, 255, 0, 255), ImDrawFlags_Closed, 1.0f);
+                    fg_draw_list->AddPolyline(triangle, 3, IM_COL32(255, 255, 0, 255), 1.0f, ImDrawFlags_Closed);
                     fg_draw_list->Flags = backup_flags;
                 }
             }
@@ -24043,7 +24064,7 @@ void ImGui::DebugNodeDrawCmdShowMeshAndBoundingBox(ImDrawList* out_draw_list, co
         for (int n = 0; n < 3; n++, idx_n++)
             vtxs_rect.Add((triangle[n] = vtx_buffer[idx_buffer ? idx_buffer[idx_n] : idx_n].pos));
         if (show_mesh)
-            out_draw_list->AddPolyline(triangle, 3, IM_COL32(255, 255, 0, 255), ImDrawFlags_Closed, 1.0f); // In yellow: mesh triangles
+            out_draw_list->AddPolyline(triangle, 3, IM_COL32(255, 255, 0, 255), 1.0f, ImDrawFlags_Closed); // In yellow: mesh triangles
     }
     // Draw bounding boxes
     if (show_aabb)
@@ -24324,8 +24345,8 @@ void ImGui::DebugNodeTabBar(ImGuiTabBar* tab_bar, const char* label)
     {
         ImDrawList* draw_list = GetForegroundDrawList(tab_bar->Window);
         draw_list->AddRect(tab_bar->BarRect.Min, tab_bar->BarRect.Max, IM_COL32(255, 255, 0, 255));
-        draw_list->AddLine(ImVec2(tab_bar->ScrollingRectMinX, tab_bar->BarRect.Min.y), ImVec2(tab_bar->ScrollingRectMinX, tab_bar->BarRect.Max.y), IM_COL32(0, 255, 0, 255));
-        draw_list->AddLine(ImVec2(tab_bar->ScrollingRectMaxX, tab_bar->BarRect.Min.y), ImVec2(tab_bar->ScrollingRectMaxX, tab_bar->BarRect.Max.y), IM_COL32(0, 255, 0, 255));
+        draw_list->AddLineV(tab_bar->ScrollingRectMinX, tab_bar->BarRect.Min.y, tab_bar->BarRect.Max.y, IM_COL32(0, 255, 0, 255));
+        draw_list->AddLineV(tab_bar->ScrollingRectMaxX, tab_bar->BarRect.Min.y, tab_bar->BarRect.Max.y, IM_COL32(0, 255, 0, 255));
     }
     if (open)
     {
@@ -24687,8 +24708,8 @@ void ImGui::DebugDrawCursorPos(ImU32 col)
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
     ImVec2 pos = window->DC.CursorPos;
-    window->DrawList->AddLine(ImVec2(pos.x, pos.y - 3.0f), ImVec2(pos.x, pos.y + 4.0f), col, 1.0f);
-    window->DrawList->AddLine(ImVec2(pos.x - 3.0f, pos.y), ImVec2(pos.x + 4.0f, pos.y), col, 1.0f);
+    window->DrawList->AddLineV(pos.x, pos.y - 3.0f, pos.y + 4.0f, col, 1.0f);
+    window->DrawList->AddLineH(pos.x - 3.0f, pos.x + 4.0f, pos.y, col, 1.0f);
 }
 
 // Draw a 10px wide rectangle around CurposPos.x using Line Y1/Y2 in current window's DrawList
@@ -24699,9 +24720,9 @@ void ImGui::DebugDrawLineExtents(ImU32 col)
     float curr_x = window->DC.CursorPos.x;
     float line_y1 = (window->DC.IsSameLine ? window->DC.CursorPosPrevLine.y : window->DC.CursorPos.y);
     float line_y2 = line_y1 + (window->DC.IsSameLine ? window->DC.PrevLineSize.y : window->DC.CurrLineSize.y);
-    window->DrawList->AddLine(ImVec2(curr_x - 5.0f, line_y1), ImVec2(curr_x + 5.0f, line_y1), col, 1.0f);
-    window->DrawList->AddLine(ImVec2(curr_x - 0.5f, line_y1), ImVec2(curr_x - 0.5f, line_y2), col, 1.0f);
-    window->DrawList->AddLine(ImVec2(curr_x - 5.0f, line_y2), ImVec2(curr_x + 5.0f, line_y2), col, 1.0f);
+    window->DrawList->AddLineH(curr_x - 5.0f, curr_x + 5.0f, line_y1, col, 1.0f);
+    window->DrawList->AddLineV(curr_x - 0.5f, line_y1, line_y2, col, 1.0f);
+    window->DrawList->AddLineH(curr_x - 5.0f, curr_x + 5.0f, line_y2, col, 1.0f);
 }
 
 // Draw last item rect in ForegroundDrawList (so it is always visible)
