@@ -8,10 +8,6 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 add_library(${PROJECT_NAME} "")
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 target_include_directories(
@@ -84,18 +80,35 @@ if(IMGUI_BUILD_OPENGL2_BINDING)
 endif()
 
 if(IMGUI_BUILD_OPENGL3_BINDING)
-    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+    if(APPLE AND (CMAKE_SYSTEM_NAME MATCHES "iOS"))
+        target_compile_definitions(${PROJECT_NAME} PRIVATE IMGUI_IMPL_OPENGL_ES3)
+        target_link_libraries(${PROJECT_NAME} PUBLIC -framework OpenGLES)
+    elseif(ANDROID)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE IMGUI_IMPL_OPENGL_ES3)
+        find_path(OPENGL_INCLUDE_DIR NAMES GLES3/gl3.h REQUIRED)
+        target_include_directories(${PROJECT_NAME} PRIVATE ${OPENGL_INCLUDE_DIR})
+    endif()
+    target_sources(
+        ${PROJECT_NAME}
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3_ext.cpp
+    )
 endif()
 
 if(IMGUI_BUILD_OPENGL3_SLANG_BINDING)
     find_package(slang CONFIG REQUIRED)
     find_package(gl3w CONFIG REQUIRED)
-    target_link_libraries(${PROJECT_NAME} PRIVATE slang::slang unofficial::gl3w::gl3w)
-    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_shader_manager_slang.cpp)
-    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3_slang.cpp)
-    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_render_core.cpp)
-    target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_gl_adapter.cpp)
-    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_gl_adapter.cpp PROPERTIES COMPILE_DEFINITIONS IMGUI_IMPL_OPENGL_LOADER_CUSTOM)
+    target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+    target_link_libraries(${PROJECT_NAME} PUBLIC slang::slang unofficial::gl3w::gl3w)
+    target_sources(
+        ${PROJECT_NAME}
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3_slang.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_shader_manager_slang.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_gl_adapter.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_render_core.cpp
+    )
 endif()
 
 if(IMGUI_BUILD_OSX_BINDING)
@@ -128,6 +141,18 @@ endif()
 
 if(IMGUI_BUILD_WIN32_BINDING)
     target_sources(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_win32.cpp)
+endif()
+
+if(IMGUI_BUILD_WEBGPU_BINDING)
+    find_package(Dawn CONFIG REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PUBLIC dawn::webgpu_dawn)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
+    list(APPEND WGPU_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp)
+    target_sources(${PROJECT_NAME} PRIVATE ${WGPU_SRCS})
+    if(APPLE)
+        set_source_files_properties(${WGPU_SRCS} PROPERTIES LANGUAGE OBJCXX)
+        target_link_libraries(${PROJECT_NAME} PUBLIC "-framework Foundation")
+    endif()
 endif()
 
 if(IMGUI_FREETYPE)
@@ -240,6 +265,7 @@ if(NOT IMGUI_SKIP_HEADERS)
         install(
             FILES
                 ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3_ext.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3_loader.h
             DESTINATION
                 include
@@ -249,12 +275,10 @@ if(NOT IMGUI_SKIP_HEADERS)
     if(IMGUI_BUILD_OPENGL3_SLANG_BINDING)
         install(
             FILES
-                ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3.h
-                ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3_loader.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_opengl3_slang.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_shader_manager_slang.h
-                ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_render_core.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_gl_adapter.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_render_core.h
             DESTINATION
                 include
         )
@@ -288,6 +312,10 @@ if(NOT IMGUI_SKIP_HEADERS)
 
     if(IMGUI_BUILD_WIN32_BINDING)
         install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_win32.h DESTINATION include)
+    endif()
+
+    if(IMGUI_BUILD_WEBGPU_BINDING)
+        install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_impl_wgpu.h DESTINATION include)
     endif()
 
     if(IMGUI_FREETYPE)

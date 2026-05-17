@@ -5401,7 +5401,8 @@ static void DemoWindowLayout()
                     draw_list->PathLineTo(p);
                     normal = ImVec2(-normal.x, -normal.y);
                 }
-                draw_list->PathStroke(ImColor(255, 255, 255, 190), false, 1.0f);
+                draw_list->PathStroke(ImColor(255, 255, 255, 190), 1.0f, 0); // IMGUI_DISABLE_OBSOLETE_FUNCTIONS: (col, thickness, flags)
+
 
                 draw_list->PopClipRect();
             }

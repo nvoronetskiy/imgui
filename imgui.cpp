@@ -8637,7 +8637,7 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
         else
             is_resizable_width = (window->Size.x > 0.0f) && !(flags & ImGuiWindowFlags_AlwaysAutoResize);
         if (is_resizable_width)
-            window->DC.ItemWidthDefault = ImTrunc(window->Size.x * 0.65f);
+            window->ItemWidthDefault = ImTrunc(window->Size.x * 0.65f);
         else
             window->ItemWidthDefault = ImTrunc(g.FontSize * 16.0f);
         window->DC.ItemWidth = window->ItemWidthDefault;

@@ -692,8 +692,7 @@ void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, unsigned int
             if (pcmd->UserCallback != nullptr)
             {
                 // User callback, registered via ImDrawList::AddCallback()
-                // (ImDrawCallback_ResetRenderState is a special callback value used by the user to request the renderer to reset render state.)
-                if (pcmd->UserCallback == ImDrawCallback_ResetRenderState)
+                if (pcmd->UserCallback == ImGui_ImplOpenGL3_DrawCallback_ResetRenderState)
                     ImGui_ImplOpenGL3_SetupRenderState(draw_data, fb_width, fb_height, vertex_array_object);
                 else
                     pcmd->UserCallback(draw_list, pcmd);

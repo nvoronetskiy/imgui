@@ -679,7 +679,7 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
 
         if (packet.isImGuiPacket && pcmd && pcmd->UserCallback != nullptr)
         {
-            if (pcmd->UserCallback == ImDrawCallback_ResetRenderState)
+            if (pcmd->UserCallback == ImGui::GetPlatformIO().DrawCallback_ResetRenderState)
                 ImGui_ImplOpenGL3Slang_SetupRenderState(draw_data, fb_width, fb_height, vertex_array_object);
             else
                 pcmd->UserCallback(draw_list, pcmd);
