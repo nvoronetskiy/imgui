@@ -1,4 +1,4 @@
-// dear imgui, v1.92.8 WIP
+// dear imgui, v1.92.9 WIP
 // (main code and documentation)
 
 // Help:
@@ -403,7 +403,6 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
                           - likewise io.MousePos and GetMousePos() will use OS coordinates.
                             If you query mouse positions to interact with non-imgui coordinates you will need to offset them, e.g. subtract GetWindowViewport()->Pos.
  - 2026/05/07 (1.92.8) - DrawList: swapped the last two arguments of AddRect(), AddPolyline(), PathStroke().
-                         Recap:
                          - Before: void ImDrawList::AddRect(ImVec2 p_min, ImVec2 p_max, ImU32 col, float rounding = 0.0f, ImDrawFlags flags = 0, float thickness = 1.0f);
                          - After:  void ImDrawList::AddRect(ImVec2 p_min, ImVec2 p_max, ImU32 col, float rounding = 0.0f, float thickness = 1.0f, ImDrawFlags flags = 0);
                          - Before: void ImDrawList::AddPolyline(const ImVec2* points, int num_points, ImU32 col, ImDrawFlags flags, float thickness);
@@ -412,18 +411,19 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
                          - After:  void ImDrawList::PathStroke(ImU32 col, float thickness = 1.0f, ImDrawFlags flags = 0);
                          Added inline redirection functions when IMGUI_DISABLE_OBSOLETE_FUNCTIONS is off.
                          Marked the old functions are =delete when IMGUI_DISABLE_OBSOLETE_FUNCTIONS is on, to allow for better type-checking.
-                         This is not an easy change but it makes ImDrawList function signatures consistent.
-                         As we are aiming to add flags and features to variety of ImDrawList functions, that consistency will become particularly important.
-                         The new order is also more convenient as 'flags' are less frequently used than 'thickness' in real code.
                          Effectively the typical call site is changing from:
-                           - Before:  window->DrawList->AddRect(p_min, p_max, color, rounding, ImDrawFlags_None, border_size);
-                           - After:   window->DrawList->AddRect(p_min, p_max, color, rounding, border_size);
+                         - Before:  window->DrawList->AddRect(p_min, p_max, color, rounding, ImDrawFlags_None, border_size);
+                         - After:   window->DrawList->AddRect(p_min, p_max, color, rounding, border_size);
                          Notes:
-                         - As a general policy in Dear ImGui, all our flags default to 0 so ImDrawFlags_None was likely written 0 in some call sites.
-                         - Users of C++ and other languages with type-checking should be notified at compile-time of any mistakes.
+                         - Users of C++ and other languages with type-checking will be notified at compile-time of any mistakes.
                          - Users of high-level bindings or languages with no type-checking will be notified at runtime via an assert for invalid flags value.
+                           If you are a binding maintainer consider doing something to facilitate transition or error detection.
+                         - This is perhaps the worst breaking change in our history :( but it makes ImDrawList function signatures consistent.
+                           As we are aiming to add flags and features to variety of ImDrawList functions, that consistency becomes more important.
+                           The new order is also more convenient as `flags` are less frequently used than `thickness` in real code.
+                         - As a general policy in Dear ImGui, all our flags default to 0 so ImDrawFlags_None was likely written 0 in some call sites.
                          - Consider adding `#define IMGUI_DISABLE_OBSOLETE_FUNCTIONS` in your imconfig.h, even temporarily, to clean up legacy code.
- - 2026/04/23 (1.92.8) - Obsoleted `ImDrawCallback_ResetRenderState` in favor of using `ImGui::GetPlatformIO().DrawCallback_ResetRenderState`, which is part of our new standard draw callbacks. (#9378)
+ - 2026/04/23 (1.92.8) - DrawList: obsoleted `ImDrawCallback_ResetRenderState` in favor of using `ImGui::GetPlatformIO().DrawCallback_ResetRenderState`, which is part of our new standard draw callbacks. (#9378)
  - 2026/04/22 (1.92.8) - Backends: Vulkan: redesigned to use separate ImageView + Sampler instead of Combined Image Sampler.
                          - When registering custom textures: changed ImGui_ImplVulkan_AddTexture() signature to remove Sampler.
                          - When creating your own descriptor pool (instead of letting backend creates its own): need at least IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE descriptors of type VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE + IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE descriptors of type VK_DESCRIPTOR_TYPE_SAMPLER.
@@ -3898,6 +3898,7 @@ const char* ImGui::GetStyleColorName(ImGuiCol idx)
     case ImGuiCol_ScrollbarGrabHovered: return "ScrollbarGrabHovered";
     case ImGuiCol_ScrollbarGrabActive: return "ScrollbarGrabActive";
     case ImGuiCol_CheckMark: return "CheckMark";
+    case ImGuiCol_CheckboxSelectedBg: return "CheckboxSelectedBg";
     case ImGuiCol_SliderGrab: return "SliderGrab";
     case ImGuiCol_SliderGrabActive: return "SliderGrabActive";
     case ImGuiCol_Button: return "Button";
@@ -4872,7 +4873,8 @@ void ImGui::SetActiveID(ImGuiID id, ImGuiWindow* window)
     g.ActiveIdIsJustActivated = (g.ActiveId != id);
     if (g.ActiveIdIsJustActivated)
     {
-        IMGUI_DEBUG_LOG_ACTIVEID("SetActiveID() old:0x%08X (window \"%s\") -> new:0x%08X (window \"%s\")\n", g.ActiveId, g.ActiveIdWindow ? g.ActiveIdWindow->Name : "", id, window ? window->Name : "");
+        IMGUI_DEBUG_LOG_ACTIVEID("SetActiveID() 0x%08X in \"%s\"%*s(previously 0x%08X in \"%s\")\n", id, window ? window->Name : "",
+            ImMax(0, 20 - (int)(window ? strlen(window->Name) : 0)), "", g.ActiveId, g.ActiveIdWindow ? g.ActiveIdWindow->Name : "");
         g.ActiveIdTimer = 0.0f;
         g.ActiveIdHasBeenPressedBefore = false;
         g.ActiveIdHasBeenEditedBefore = false;
@@ -5564,14 +5566,15 @@ void ImGui::UpdateMouseMovingWindowEndFrame()
 
     // Click on empty space to focus window and start moving
     // (after we're done with all our widgets, so e.g. clicking on docking tab-bar which have set HoveredId already and not get us here!)
-    if (g.IO.MouseClicked[0])
+    if (IsMouseClicked(0, ImGuiInputFlags_None, ImGuiKeyOwner_NoOwner))
     {
         // Handle the edge case of a popup being closed while clicking in its empty space.
         // If we try to focus it, FocusWindow() > ClosePopupsOverWindow() will accidentally close any parent popups because they are not linked together any more.
         ImGuiWindow* hovered_root = hovered_window ? hovered_window->RootWindow : NULL;
         const bool is_closed_popup = hovered_root && (hovered_root->Flags & ImGuiWindowFlags_Popup) && !IsPopupOpen(hovered_root->PopupId, ImGuiPopupFlags_AnyPopupLevel);
+        const bool is_queued_focus_request = g.NavMoveSubmitted && (g.NavMoveFlags & ImGuiNavMoveFlags_FocusApi);
 
-        if (hovered_window != NULL && !is_closed_popup)
+        if (hovered_window != NULL && !is_closed_popup && !is_queued_focus_request)
         {
             StartMouseMovingWindow(hovered_window); //-V595
 
@@ -5602,7 +5605,7 @@ void ImGui::UpdateMouseMovingWindowEndFrame()
     // With right mouse button we close popups without changing focus based on where the mouse is aimed
     // Instead, focus will be restored to the window under the bottom-most closed popup.
     // (The left mouse button path calls FocusWindow on the hovered window, which will lead NewFrame->ClosePopupsOverWindow to trigger)
-    if (g.IO.MouseClicked[1] && g.HoveredId == 0)
+    if (g.HoveredId == 0 && IsMouseClicked(1, ImGuiInputFlags_None, ImGuiKeyOwner_NoOwner))
     {
         // Find the top-most window between HoveredWindow and the top-most Modal Window.
         // This is where we can trim the popup stack.
@@ -5997,7 +6000,7 @@ void ImGui::NewFrame()
     g.CurrentWindowStack.resize(0);
     g.BeginPopupStack.resize(0);
     g.ItemFlagsStack.resize(0);
-    g.ItemFlagsStack.push_back(ImGuiItemFlags_AutoClosePopups); // Default flags
+    g.ItemFlagsStack.push_back(ImGuiItemFlags_Default_); // Default flags
     g.CurrentItemFlags = g.ItemFlagsStack.back();
     g.GroupStack.resize(0);
 
@@ -11061,14 +11064,20 @@ void ImGui::UpdateMouseWheel()
             LockWheelingWindow(NULL, 0.0f);
     }
 
-    ImVec2 wheel;
-    wheel.x = TestKeyOwner(ImGuiKey_MouseWheelX, ImGuiKeyOwner_NoOwner) ? g.IO.MouseWheelH : 0.0f;
-    wheel.y = TestKeyOwner(ImGuiKey_MouseWheelY, ImGuiKeyOwner_NoOwner) ? g.IO.MouseWheel : 0.0f;
-
-    //IMGUI_DEBUG_LOG("MouseWheel X:%.3f Y:%.3f\n", wheel_x, wheel_y);
     ImGuiWindow* mouse_window = g.WheelingWindow ? g.WheelingWindow : g.HoveredWindow;
     if (!mouse_window || mouse_window->Collapsed)
         return;
+
+    ImGuiID owner_id = mouse_window->ID;
+    ImVec2 wheel;
+    wheel.x = TestKeyOwner(ImGuiKey_MouseWheelX, owner_id) ? g.IO.MouseWheelH : 0.0f;
+    wheel.y = TestKeyOwner(ImGuiKey_MouseWheelY, owner_id) ? g.IO.MouseWheel : 0.0f;
+    //IMGUI_DEBUG_LOG("MouseWheel X:%.3f Y:%.3f\n", wheel_x, wheel_y);
+    if (g.WheelingWindow != NULL)
+    {
+        SetKeyOwner(ImGuiKey_MouseWheelX, owner_id);
+        SetKeyOwner(ImGuiKey_MouseWheelY, owner_id);
+    }
 
     // Zoom / Scale window
     // FIXME-OBSOLETE: This is an old feature, it still works but pretty much nobody is using it and may be best redesigned.
@@ -11378,6 +11387,7 @@ bool ImGui::TestKeyOwner(ImGuiKey key, ImGuiID owner_id)
 // - SetKeyOwner(..., None)              : clears owner
 // - SetKeyOwner(..., Any, !Lock)        : illegal (assert)
 // - SetKeyOwner(..., Any or None, Lock) : set lock
+// Ownership is automatically released on the frame after a release, see code in UpdateKeyboardInputs().
 void ImGui::SetKeyOwner(ImGuiKey key, ImGuiID owner_id, ImGuiInputFlags flags)
 {
     ImGuiContext& g = *GImGui;
@@ -11404,30 +11414,34 @@ void ImGui::SetKeyOwnersForKeyChord(ImGuiKeyChord key_chord, ImGuiID owner_id, I
     if (key_chord & ~ImGuiMod_Mask_)    { SetKeyOwner((ImGuiKey)(key_chord & ~ImGuiMod_Mask_), owner_id, flags); }
 }
 
-// This is more or less equivalent to:
+// This is more or less equivalent to a fancier version of:
 //   if (IsItemHovered() || IsItemActive())
 //       SetKeyOwner(key, GetItemID());
 // Extensive uses of that (e.g. many calls for a single item) may want to manually perform the tests once and then call SetKeyOwner() multiple times.
 // More advanced usage scenarios may want to call SetKeyOwner() manually based on different condition.
 // Worth noting is that only one item can be hovered and only one item can be active, therefore this usage pattern doesn't need to bother with routing and priority.
-void ImGui::SetItemKeyOwner(ImGuiKey key, ImGuiInputFlags flags)
+bool ImGui::SetItemKeyOwner(ImGuiKey key, ImGuiInputFlags flags)
 {
     ImGuiContext& g = *GImGui;
     ImGuiID id = g.LastItemData.ID;
     if (id == 0 || (g.HoveredId != id && g.ActiveId != id))
-        return;
+        return false;
     if ((flags & ImGuiInputFlags_CondMask_) == 0)
         flags |= ImGuiInputFlags_CondDefault_;
     if ((g.HoveredId == id && (flags & ImGuiInputFlags_CondHovered)) || (g.ActiveId == id && (flags & ImGuiInputFlags_CondActive)))
     {
         IM_ASSERT((flags & ~ImGuiInputFlags_SupportedBySetItemKeyOwner) == 0); // Passing flags not supported by this function!
+        if (!TestKeyOwner(key, id))
+            return false;
         SetKeyOwner(key, id, flags & ~ImGuiInputFlags_CondMask_);
+        return true;
     }
+    return false;
 }
 
-void ImGui::SetItemKeyOwner(ImGuiKey key)
+bool ImGui::SetItemKeyOwner(ImGuiKey key)
 {
-    SetItemKeyOwner(key, ImGuiInputFlags_None);
+    return SetItemKeyOwner(key, ImGuiInputFlags_None);
 }
 
 // This is the only public API until we expose owner_id versions of the API as replacements.
@@ -13930,6 +13944,17 @@ bool ImGui::BeginPopupMenuEx(ImGuiID id, const char* label, ImGuiWindowFlags ext
         return false;
     }
 
+    // As we bypass BeginChild(), set ImGuiChildFlags_AlwaysAutoResize as it is checked independently from ImGuiWindowFlags_AlwaysAutoResize for now (see #9355)
+    // Ideally we should remove setting ImGuiWindowFlags_AlwaysAutoResize in BeginChild().
+    if ((extra_window_flags & ImGuiWindowFlags_ChildWindow) && (extra_window_flags & ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        if (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasChildFlags)
+            g.NextWindowData.ChildFlags |= ImGuiChildFlags_AlwaysAutoResize;
+        else
+            g.NextWindowData.ChildFlags = ImGuiChildFlags_AlwaysAutoResize;
+        g.NextWindowData.HasFlags |= ImGuiNextWindowDataFlags_HasChildFlags;
+    }
+
     char name[128];
     IM_ASSERT(extra_window_flags & ImGuiWindowFlags_ChildMenu);
     ImFormatString(name, IM_COUNTOF(name), "%s###Menu_%02d", label, g.BeginMenuDepth); // Recycle windows based on depth
@@ -15263,13 +15288,13 @@ static void ImGui::NavUpdate()
     // FIXME-NAV: Now that keys are separated maybe we can get rid of NavInputSource?
     const bool nav_gamepad_active = (io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) != 0 && (io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0;
     const ImGuiKey nav_gamepad_keys_to_change_source[] = { ImGuiKey_GamepadFaceRight, ImGuiKey_GamepadFaceLeft, ImGuiKey_GamepadFaceUp, ImGuiKey_GamepadFaceDown, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadDpadDown };
-    if (nav_gamepad_active)
+    if (nav_gamepad_active && g.NavInputSource != ImGuiInputSource_Gamepad)
         for (ImGuiKey key : nav_gamepad_keys_to_change_source)
             if (IsKeyDown(key))
                 g.NavInputSource = ImGuiInputSource_Gamepad;
     const bool nav_keyboard_active = (io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) != 0;
     const ImGuiKey nav_keyboard_keys_to_change_source[] = { ImGuiKey_Space, ImGuiKey_Enter, ImGuiKey_Escape, ImGuiKey_RightArrow, ImGuiKey_LeftArrow, ImGuiKey_UpArrow, ImGuiKey_DownArrow };
-    if (nav_keyboard_active)
+    if (nav_keyboard_active && g.NavInputSource != ImGuiInputSource_Keyboard)
         for (ImGuiKey key : nav_keyboard_keys_to_change_source)
             if (IsKeyDown(key))
                 g.NavInputSource = ImGuiInputSource_Keyboard;
@@ -25092,7 +25117,7 @@ void ImGui::ShowFontSelector(const char* label)
             "- Load additional fonts with io.Fonts->AddFontXXX() functions.\n"
             "- The font atlas is built when calling io.Fonts->GetTexDataAsXXXX() or io.Fonts->Build().\n"
             "- Read FAQ and docs/FONTS.md for more details.\n"
-            "- If you need to add/remove fonts at runtime (e.g. for DPI change), do it before calling NewFrame().");
+            "- Legacy backend: if you need to add/remove fonts at runtime (e.g. for DPI change), do it before calling NewFrame().");
 }
 #endif // #if !defined(IMGUI_DISABLE_DEMO_WINDOWS) || !defined(IMGUI_DISABLE_DEBUG_TOOLS)
 
