@@ -604,11 +604,10 @@ bool EffectSystem::BeginEffectWindow(const char* name, EffectHandle effectHandle
     cap.token = effectHandle;
     cap.drawList = drawList;
     cap.viewportId = viewport ? viewport->ID : 0;
-    const ImVec2 windowPos = ImGui::GetWindowPos();
-    const ImVec2 crMin = ImGui::GetWindowContentRegionMin();
-    const ImVec2 crMax = ImGui::GetWindowContentRegionMax();
-    cap.contentClipMin = ImVec2(windowPos.x + crMin.x, windowPos.y + crMin.y);
-    cap.contentClipMax = ImVec2(windowPos.x + crMax.x, windowPos.y + crMax.y);
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    const ImRect& ir = win->InnerClipRect;
+    cap.contentClipMin = ir.Min;
+    cap.contentClipMax = ir.Max;
     cap.idxStart = drawList ? drawList->IdxBuffer.Size : 0;
     cap.idxEnd = cap.idxStart;
     cap.fontPolicy = fontPolicy;
@@ -704,7 +703,7 @@ void EffectSystem::ProcessOneCapture(const OpenCapture& cap, const ImTextureID f
     {
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         if (fg)
-            fg->AddRect(cap.contentClipMin, cap.contentClipMax, IM_COL32(0, 255, 100, 200), 0.0f, 0, 2.0f);
+            fg->AddRect(cap.contentClipMin, cap.contentClipMax, IM_COL32(0, 255, 100, 200), 0.0f, 2.0f, 0);
     }
 
     const int currentIdxCount = cap.drawList->IdxBuffer.Size;
@@ -787,7 +786,9 @@ void EffectSystem::SubmitQueuedEffects()
 
     ImGui_ImplOpenGL3Slang_ClearEffectCaptureSkips();
     EffectDebugStats stats{};
-    const ImTextureID fontTexId = ImGui::GetIO().Fonts ? ImGui::GetIO().Fonts->TexID.GetTexID() : ImTextureID_Invalid;
+    ImFontAtlas* fonts = ImGui::GetIO().Fonts;
+    const ImTextureID fontTexId =
+        (fonts && fonts->TexData) ? fonts->TexData->TexID : ImTextureID_Invalid;
 
     for (const OpenCapture& cap : m_queuedCaptures)
         ProcessOneCapture(cap, fontTexId, stats);
