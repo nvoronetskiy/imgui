@@ -35,4 +35,16 @@ struct ImGui_ImplOpenGL3Slang_Stats
 };
 IMGUI_IMPL_API ImGui_ImplOpenGL3Slang_Stats ImGui_ImplOpenGL3Slang_GetStats();
 
+/// Optional hook: return true to skip default imgui shader draws (e.g. MSDF effect mesh).
+using ImGui_ImplOpenGL3Slang_ShouldSkipDefaultDrawFn = bool (*)(const ImDrawList* drawList,
+                                                                const ImDrawCmd* cmd);
+IMGUI_IMPL_API void ImGui_ImplOpenGL3Slang_SetDefaultDrawSkipFn(
+    ImGui_ImplOpenGL3Slang_ShouldSkipDefaultDrawFn fn);
+
+/// Index ranges captured by EffectSystem — skip default pass (re-rendered by effect shader).
+IMGUI_IMPL_API void ImGui_ImplOpenGL3Slang_ClearEffectCaptureSkips();
+IMGUI_IMPL_API void ImGui_ImplOpenGL3Slang_PushEffectCaptureSkip(const ImDrawList* drawList,
+                                                                 int idxStart,
+                                                                 int idxEnd);
+
 #endif // #ifndef IMGUI_DISABLE

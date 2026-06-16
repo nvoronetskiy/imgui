@@ -167,7 +167,37 @@ struct ShaderProgramState
 };
 static std::unordered_map<std::string, ShaderProgramState> g_ShaderPrograms;
 static ImGui_ImplOpenGL3Slang_Stats g_LastStats;
+static ImGui_ImplOpenGL3Slang_ShouldSkipDefaultDrawFn g_SkipDefaultDrawFn = nullptr;
+struct EffectCaptureSkipRange
+{
+    const ImDrawList* drawList = nullptr;
+    int idxStart = 0;
+    int idxEnd = 0;
+};
+static std::vector<EffectCaptureSkipRange> g_EffectCaptureSkips;
 static std::string g_LastErrorText;
+
+static bool ShouldSkipDefaultDrawForCmd(const ImDrawList* drawList, const ImDrawCmd* cmd)
+{
+    if (!drawList || !cmd || cmd->UserCallback != nullptr || cmd->ElemCount == 0)
+        return false;
+
+    const int cmdIdxStart = static_cast<int>(cmd->IdxOffset);
+    const int cmdIdxEnd = static_cast<int>(cmd->IdxOffset + cmd->ElemCount);
+    for (const EffectCaptureSkipRange& range : g_EffectCaptureSkips)
+    {
+        if (range.drawList != drawList)
+            continue;
+        const int overlapStart = (range.idxStart > cmdIdxStart) ? range.idxStart : cmdIdxStart;
+        const int overlapEnd = (range.idxEnd < cmdIdxEnd) ? range.idxEnd : cmdIdxEnd;
+        if (overlapEnd > overlapStart)
+            return true;
+    }
+
+    if (g_SkipDefaultDrawFn)
+        return g_SkipDefaultDrawFn(drawList, cmd);
+    return false;
+}
 
 // Backend data stored in io.BackendRendererUserData to allow support for multiple Dear ImGui contexts
 static ImGui_ImplOpenGL3Slang_Data* ImGui_ImplOpenGL3Slang_GetBackendData()
@@ -556,11 +586,16 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
     bd->FrameCommands->Clear();
     for (const ImGuiRenderCore::UniformBlockUpdate& u : pendingUniforms)
         bd->FrameCommands->PushUniformUpdate(u);
+    // Effect capture skips are registered in SubmitQueuedEffects() before this call.
     for (const ImDrawList* draw_list : draw_data->CmdLists)
     {
         for (int cmd_i = 0; cmd_i < draw_list->CmdBuffer.Size; cmd_i++)
         {
             const ImDrawCmd* pcmd = &draw_list->CmdBuffer[cmd_i];
+            if (pcmd->UserCallback != nullptr || pcmd->ElemCount == 0)
+                continue;
+            if (ShouldSkipDefaultDrawForCmd(draw_list, pcmd))
+                continue;
             ImGuiRenderCore::DrawPacket packet;
             packet.pipelineKey = "imgui_default";
             packet.texture = pcmd->GetTexID();
@@ -1310,6 +1345,23 @@ void ImGui_ImplOpenGL3Slang_SetGlobalUniformBlock(const char* blockName, uint32_
     update.bytes.resize(bytes);
     memcpy(update.bytes.data(), data, bytes);
     bd->FrameCommands->PushUniformUpdate(update);
+}
+
+void ImGui_ImplOpenGL3Slang_SetDefaultDrawSkipFn(ImGui_ImplOpenGL3Slang_ShouldSkipDefaultDrawFn fn)
+{
+    g_SkipDefaultDrawFn = fn;
+}
+
+void ImGui_ImplOpenGL3Slang_ClearEffectCaptureSkips()
+{
+    g_EffectCaptureSkips.clear();
+}
+
+void ImGui_ImplOpenGL3Slang_PushEffectCaptureSkip(const ImDrawList* drawList, int idxStart, int idxEnd)
+{
+    if (!drawList || idxEnd <= idxStart)
+        return;
+    g_EffectCaptureSkips.push_back({drawList, idxStart, idxEnd});
 }
 
 ImGui_ImplOpenGL3Slang_Stats ImGui_ImplOpenGL3Slang_GetStats()
