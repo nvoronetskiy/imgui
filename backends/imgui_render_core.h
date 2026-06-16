@@ -27,6 +27,7 @@ enum class BlendOp
     Add,
     Subtract,
     ReverseSubtract,
+    Max,
 };
 
 struct BlendStateDesc

@@ -24,6 +24,7 @@ enum class BuiltinBlendMode
     Additive,
     Multiply,
     PremultipliedAlpha,
+    Max,
 };
 
 /// Controls whether draw commands that use the font atlas are sent through the effect pass.
@@ -191,6 +192,9 @@ public:
     void SetAutoReloadInterval(float seconds) { m_autoReloadIntervalSec = seconds; }
 
     const std::string& GetLastCreateError() const { return m_lastCreateError; }
+
+    /// Detect draws emitted by `EmitMsdfEffectMeshToDrawList` (packed glyph UV in vertex color G/B).
+    static bool IsMsdfEffectDefaultSkipDraw(const ImDrawList* drawList, const ImDrawCmd* cmd);
 
 private:
     struct EffectMeta
