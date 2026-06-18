@@ -92,6 +92,9 @@ struct DrawPacket
     /// When non-zero and effectUniformBytes non-empty, the backend uploads bytes to this binding.
     uint32_t effectUniformBinding = 0;
     std::vector<uint8_t> effectUniformBytes;
+    /// Optional SSBO for custom effect shaders (e.g. Slang `[[vk::binding(3)]] StructuredBuffer<...>`).
+    uint32_t storageBufferBinding = 0;
+    std::vector<uint8_t> storageBufferBytes;
 };
 
 struct FrameCommandList

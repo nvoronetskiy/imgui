@@ -141,6 +141,8 @@ struct ImGui_ImplOpenGL3Slang_Data
     GLuint          AttribLocationVtxColor;
     unsigned int    VboHandle, ElementsHandle;
     GLuint          EffectParamsUbo;         // std140 scratch buffer for per-draw effect uniforms (binding 2)
+    GLuint          EffectStorageSsbo;       // scratch SSBO for per-draw storage buffers (binding 3+)
+    GLsizeiptr      EffectStorageSsboSize;
     GLsizeiptr      VertexBufferSize;
     GLsizeiptr      IndexBufferSize;
     bool            HasPolygonMode;
@@ -681,6 +683,23 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
                         GL_CALL(glBufferSubData(GL_UNIFORM_BUFFER, 0, ubo_sz, packet.effectUniformBytes.data()));
                         glBindBufferBase(GL_UNIFORM_BUFFER, (GLuint)packet.effectUniformBinding, bd->EffectParamsUbo);
                     }
+                    if (!packet.storageBufferBytes.empty() && packet.storageBufferBinding != 0)
+                    {
+                        const GLsizeiptr ssbo_sz = (GLsizeiptr)packet.storageBufferBytes.size();
+                        if (bd->EffectStorageSsbo == 0)
+                        {
+                            glGenBuffers(1, &bd->EffectStorageSsbo);
+                            bd->EffectStorageSsboSize = 0;
+                        }
+                        GL_CALL(glBindBuffer(GL_SHADER_STORAGE_BUFFER, bd->EffectStorageSsbo));
+                        if (ssbo_sz > bd->EffectStorageSsboSize)
+                        {
+                            GL_CALL(glBufferData(GL_SHADER_STORAGE_BUFFER, ssbo_sz, nullptr, GL_DYNAMIC_DRAW));
+                            bd->EffectStorageSsboSize = ssbo_sz;
+                        }
+                        GL_CALL(glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, ssbo_sz, packet.storageBufferBytes.data()));
+                        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, (GLuint)packet.storageBufferBinding, bd->EffectStorageSsbo);
+                    }
                 }
             }
         }
@@ -1220,6 +1239,7 @@ void    ImGui_ImplOpenGL3Slang_DestroyDeviceObjects()
     if (bd->ElementsHandle) { glDeleteBuffers(1, &bd->ElementsHandle); bd->ElementsHandle = 0; }
     if (bd->UboHandle)      { glDeleteBuffers(1, &bd->UboHandle); bd->UboHandle = 0; }
     if (bd->EffectParamsUbo) { glDeleteBuffers(1, &bd->EffectParamsUbo); bd->EffectParamsUbo = 0; }
+    if (bd->EffectStorageSsbo) { glDeleteBuffers(1, &bd->EffectStorageSsbo); bd->EffectStorageSsbo = 0; }
     for (auto& it : g_ShaderPrograms)
     {
         if (it.second.program != 0 && it.second.program != bd->ShaderHandle)
