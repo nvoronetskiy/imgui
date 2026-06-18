@@ -95,8 +95,13 @@ struct DrawPacket
     /// Optional SSBO for custom effect shaders (e.g. Slang `[[vk::binding(3)]] StructuredBuffer<...>`).
     uint32_t storageBufferBinding = 0;
     std::vector<uint8_t> storageBufferBytes;
+    /// When non-null, uploaded instead of copying `storageBufferBytes` (valid until draw is submitted).
+    const void* storageBufferData = nullptr;
+    size_t storageBufferDataSize = 0;
     uint32_t storageBufferBinding2 = 0;
     std::vector<uint8_t> storageBufferBytes2;
+    const void* storageBufferData2 = nullptr;
+    size_t storageBufferData2Size = 0;
 };
 
 struct FrameCommandList

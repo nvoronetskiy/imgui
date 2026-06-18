@@ -685,39 +685,67 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
                         GL_CALL(glBufferSubData(GL_UNIFORM_BUFFER, 0, ubo_sz, packet.effectUniformBytes.data()));
                         glBindBufferBase(GL_UNIFORM_BUFFER, (GLuint)packet.effectUniformBinding, bd->EffectParamsUbo);
                     }
-                    if (!packet.storageBufferBytes.empty() && packet.storageBufferBinding != 0)
+                    if (packet.storageBufferBinding != 0)
                     {
-                        const GLsizeiptr ssbo_sz = (GLsizeiptr)packet.storageBufferBytes.size();
-                        if (bd->EffectStorageSsbo == 0)
+                        const void* ssbo_data = nullptr;
+                        GLsizeiptr ssbo_sz = 0;
+                        if (packet.storageBufferData != nullptr && packet.storageBufferDataSize > 0)
                         {
-                            glGenBuffers(1, &bd->EffectStorageSsbo);
-                            bd->EffectStorageSsboSize = 0;
+                            ssbo_data = packet.storageBufferData;
+                            ssbo_sz = (GLsizeiptr)packet.storageBufferDataSize;
                         }
-                        GL_CALL(glBindBuffer(GL_SHADER_STORAGE_BUFFER, bd->EffectStorageSsbo));
-                        if (ssbo_sz > bd->EffectStorageSsboSize)
+                        else if (!packet.storageBufferBytes.empty())
                         {
-                            GL_CALL(glBufferData(GL_SHADER_STORAGE_BUFFER, ssbo_sz, nullptr, GL_DYNAMIC_DRAW));
-                            bd->EffectStorageSsboSize = ssbo_sz;
+                            ssbo_data = packet.storageBufferBytes.data();
+                            ssbo_sz = (GLsizeiptr)packet.storageBufferBytes.size();
                         }
-                        GL_CALL(glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, ssbo_sz, packet.storageBufferBytes.data()));
-                        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, (GLuint)packet.storageBufferBinding, bd->EffectStorageSsbo);
+                        if (ssbo_data != nullptr && ssbo_sz > 0)
+                        {
+                            if (bd->EffectStorageSsbo == 0)
+                            {
+                                glGenBuffers(1, &bd->EffectStorageSsbo);
+                                bd->EffectStorageSsboSize = 0;
+                            }
+                            GL_CALL(glBindBuffer(GL_SHADER_STORAGE_BUFFER, bd->EffectStorageSsbo));
+                            if (ssbo_sz > bd->EffectStorageSsboSize)
+                            {
+                                GL_CALL(glBufferData(GL_SHADER_STORAGE_BUFFER, ssbo_sz, nullptr, GL_DYNAMIC_DRAW));
+                                bd->EffectStorageSsboSize = ssbo_sz;
+                            }
+                            GL_CALL(glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, ssbo_sz, ssbo_data));
+                            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, (GLuint)packet.storageBufferBinding, bd->EffectStorageSsbo);
+                        }
                     }
-                    if (!packet.storageBufferBytes2.empty() && packet.storageBufferBinding2 != 0)
+                    if (packet.storageBufferBinding2 != 0)
                     {
-                        const GLsizeiptr ssbo_sz = (GLsizeiptr)packet.storageBufferBytes2.size();
-                        if (bd->EffectStorageSsbo2 == 0)
+                        const void* ssbo_data = nullptr;
+                        GLsizeiptr ssbo_sz = 0;
+                        if (packet.storageBufferData2 != nullptr && packet.storageBufferData2Size > 0)
                         {
-                            glGenBuffers(1, &bd->EffectStorageSsbo2);
-                            bd->EffectStorageSsbo2Size = 0;
+                            ssbo_data = packet.storageBufferData2;
+                            ssbo_sz = (GLsizeiptr)packet.storageBufferData2Size;
                         }
-                        GL_CALL(glBindBuffer(GL_SHADER_STORAGE_BUFFER, bd->EffectStorageSsbo2));
-                        if (ssbo_sz > bd->EffectStorageSsbo2Size)
+                        else if (!packet.storageBufferBytes2.empty())
                         {
-                            GL_CALL(glBufferData(GL_SHADER_STORAGE_BUFFER, ssbo_sz, nullptr, GL_DYNAMIC_DRAW));
-                            bd->EffectStorageSsbo2Size = ssbo_sz;
+                            ssbo_data = packet.storageBufferBytes2.data();
+                            ssbo_sz = (GLsizeiptr)packet.storageBufferBytes2.size();
                         }
-                        GL_CALL(glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, ssbo_sz, packet.storageBufferBytes2.data()));
-                        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, (GLuint)packet.storageBufferBinding2, bd->EffectStorageSsbo2);
+                        if (ssbo_data != nullptr && ssbo_sz > 0)
+                        {
+                            if (bd->EffectStorageSsbo2 == 0)
+                            {
+                                glGenBuffers(1, &bd->EffectStorageSsbo2);
+                                bd->EffectStorageSsbo2Size = 0;
+                            }
+                            GL_CALL(glBindBuffer(GL_SHADER_STORAGE_BUFFER, bd->EffectStorageSsbo2));
+                            if (ssbo_sz > bd->EffectStorageSsbo2Size)
+                            {
+                                GL_CALL(glBufferData(GL_SHADER_STORAGE_BUFFER, ssbo_sz, nullptr, GL_DYNAMIC_DRAW));
+                                bd->EffectStorageSsbo2Size = ssbo_sz;
+                            }
+                            GL_CALL(glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, ssbo_sz, ssbo_data));
+                            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, (GLuint)packet.storageBufferBinding2, bd->EffectStorageSsbo2);
+                        }
                     }
                 }
             }
