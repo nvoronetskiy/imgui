@@ -132,6 +132,7 @@ const char* EffectSystem::BlendKey(BuiltinBlendMode mode)
     case BuiltinBlendMode::Additive: return "ux_additive";
     case BuiltinBlendMode::Multiply: return "ux_multiply";
     case BuiltinBlendMode::PremultipliedAlpha: return "ux_premultiplied_alpha";
+    case BuiltinBlendMode::Max: return "ux_max";
     default: return "ux_alpha";
     }
 }
@@ -160,6 +161,14 @@ ImGuiRenderCore::BlendStateDesc EffectSystem::BlendDesc(BuiltinBlendMode mode)
         desc.dstColor = ImGuiRenderCore::BlendFactor::OneMinusSrcAlpha;
         desc.srcAlpha = ImGuiRenderCore::BlendFactor::One;
         desc.dstAlpha = ImGuiRenderCore::BlendFactor::OneMinusSrcAlpha;
+        break;
+    case BuiltinBlendMode::Max:
+        desc.srcColor = ImGuiRenderCore::BlendFactor::One;
+        desc.dstColor = ImGuiRenderCore::BlendFactor::One;
+        desc.srcAlpha = ImGuiRenderCore::BlendFactor::One;
+        desc.dstAlpha = ImGuiRenderCore::BlendFactor::One;
+        desc.colorOp = ImGuiRenderCore::BlendOp::Max;
+        desc.alphaOp = ImGuiRenderCore::BlendOp::Max;
         break;
     default:
         break;
@@ -201,8 +210,36 @@ bool EffectSystem::Initialize()
     ImGui_ImplOpenGL3Slang_RegisterBlendMode(BlendKey(BuiltinBlendMode::Additive), BlendDesc(BuiltinBlendMode::Additive));
     ImGui_ImplOpenGL3Slang_RegisterBlendMode(BlendKey(BuiltinBlendMode::Multiply), BlendDesc(BuiltinBlendMode::Multiply));
     ImGui_ImplOpenGL3Slang_RegisterBlendMode(BlendKey(BuiltinBlendMode::PremultipliedAlpha), BlendDesc(BuiltinBlendMode::PremultipliedAlpha));
+    ImGui_ImplOpenGL3Slang_RegisterBlendMode(BlendKey(BuiltinBlendMode::Max), BlendDesc(BuiltinBlendMode::Max));
+    ImGui_ImplOpenGL3Slang_SetDefaultDrawSkipFn(&EffectSystem::IsMsdfEffectDefaultSkipDraw);
     m_initialized = true;
     return true;
+}
+
+bool EffectSystem::IsMsdfEffectDefaultSkipDraw(const ImDrawList* drawList, const ImDrawCmd* cmd)
+{
+    if (!drawList || !cmd || cmd->UserCallback != nullptr || cmd->ElemCount < 3)
+        return false;
+
+    auto isPackedMsdfEffectVtx = [](ImU32 col) -> bool {
+        const uint8_t a = static_cast<uint8_t>((col >> IM_COL32_A_SHIFT) & 0xFF);
+        const uint8_t r = static_cast<uint8_t>((col >> IM_COL32_R_SHIFT) & 0xFF);
+        const uint8_t g = static_cast<uint8_t>((col >> IM_COL32_G_SHIFT) & 0xFF);
+        const uint8_t b = static_cast<uint8_t>((col >> IM_COL32_B_SHIFT) & 0xFF);
+        // EmitMsdfEffectMeshToDrawList: A carries opacity; R=255; G/B encode local glyph UV.
+        return r == 255 && (g != 255 || b != 255);
+    };
+
+    int packedVerts = 0;
+    const int idxCount = static_cast<int>(cmd->ElemCount);
+    for (int i = 0; i < idxCount; ++i)
+    {
+        const ImDrawIdx idx = drawList->IdxBuffer[cmd->IdxOffset + i];
+        const ImDrawVert& vtx = drawList->VtxBuffer[static_cast<int>(idx) + cmd->VtxOffset];
+        if (isPackedMsdfEffectVtx(vtx.col))
+            ++packedVerts;
+    }
+    return packedVerts >= 3;
 }
 
 EffectSystem::EffectMeta* EffectSystem::FindEffect(EffectHandle handle)
@@ -567,11 +604,10 @@ bool EffectSystem::BeginEffectWindow(const char* name, EffectHandle effectHandle
     cap.token = effectHandle;
     cap.drawList = drawList;
     cap.viewportId = viewport ? viewport->ID : 0;
-    const ImVec2 windowPos = ImGui::GetWindowPos();
-    const ImVec2 crMin = ImGui::GetWindowContentRegionMin();
-    const ImVec2 crMax = ImGui::GetWindowContentRegionMax();
-    cap.contentClipMin = ImVec2(windowPos.x + crMin.x, windowPos.y + crMin.y);
-    cap.contentClipMax = ImVec2(windowPos.x + crMax.x, windowPos.y + crMax.y);
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    const ImRect& ir = win->InnerClipRect;
+    cap.contentClipMin = ir.Min;
+    cap.contentClipMax = ir.Max;
     cap.idxStart = drawList ? drawList->IdxBuffer.Size : 0;
     cap.idxEnd = cap.idxStart;
     cap.fontPolicy = fontPolicy;
@@ -650,6 +686,13 @@ void EffectSystem::EnqueueCustomDraw(EffectHandle effectHandle, const ImGuiRende
     m_explicitPackets.push_back(std::make_pair(effectHandle, packet));
 }
 
+void EffectSystem::QueueDrawListIndexSkip(const ImDrawList* drawList, int idxStart, int idxEnd)
+{
+    if (!drawList || idxEnd <= idxStart)
+        return;
+    m_pendingIndexSkips.push_back(IndexSkipRange{drawList, idxStart, idxEnd});
+}
+
 void EffectSystem::ProcessOneCapture(const OpenCapture& cap, const ImTextureID fontTexId, EffectDebugStats& ioStats)
 {
     const EffectMeta* meta = FindEffect(cap.token);
@@ -667,7 +710,7 @@ void EffectSystem::ProcessOneCapture(const OpenCapture& cap, const ImTextureID f
     {
         ImDrawList* fg = ImGui::GetForegroundDrawList();
         if (fg)
-            fg->AddRect(cap.contentClipMin, cap.contentClipMax, IM_COL32(0, 255, 100, 200), 0.0f, 0, 2.0f);
+            fg->AddRect(cap.contentClipMin, cap.contentClipMax, IM_COL32(0, 255, 100, 200), 0.0f, 2.0f, 0);
     }
 
     const int currentIdxCount = cap.drawList->IdxBuffer.Size;
@@ -675,6 +718,8 @@ void EffectSystem::ProcessOneCapture(const OpenCapture& cap, const ImTextureID f
     const int idxEnd = (cap.idxEnd < idxStart) ? idxStart : (cap.idxEnd > currentIdxCount ? currentIdxCount : cap.idxEnd);
     if (idxEnd <= idxStart)
         return;
+
+    ImGui_ImplOpenGL3Slang_PushEffectCaptureSkip(cap.drawList, idxStart, idxEnd);
 
     for (int i = 0; i < cap.drawList->CmdBuffer.Size; ++i)
     {
@@ -746,8 +791,15 @@ void EffectSystem::SubmitQueuedEffects()
         IM_ASSERT(false && "EffectSystem: SubmitQueuedEffects called twice this frame (call AdvanceFrame() at loop start; use a single EffectSubmitGuard or manual Submit)");
     m_submitCountThisFrame++;
 
+    ImGui_ImplOpenGL3Slang_ClearEffectCaptureSkips();
     EffectDebugStats stats{};
-    const ImTextureID fontTexId = ImGui::GetIO().Fonts ? ImGui::GetIO().Fonts->TexID.GetTexID() : ImTextureID_Invalid;
+    ImFontAtlas* fonts = ImGui::GetIO().Fonts;
+    const ImTextureID fontTexId =
+        (fonts && fonts->TexData) ? fonts->TexData->TexID : ImTextureID_Invalid;
+
+    for (const IndexSkipRange& skip : m_pendingIndexSkips)
+        ImGui_ImplOpenGL3Slang_PushEffectCaptureSkip(skip.drawList, skip.idxStart, skip.idxEnd);
+    m_pendingIndexSkips.clear();
 
     for (const OpenCapture& cap : m_queuedCaptures)
         ProcessOneCapture(cap, fontTexId, stats);
@@ -787,6 +839,7 @@ void EffectSystem::ClearQueuedEffects()
     m_openCaptures.clear();
     m_queuedCaptures.clear();
     m_explicitPackets.clear();
+    m_pendingIndexSkips.clear();
 }
 
 void EffectSystem::ShowDebugWindow(bool* p_open)

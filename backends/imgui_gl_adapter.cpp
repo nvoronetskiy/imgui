@@ -32,6 +32,7 @@ GLenum OpenGLAdapter::ToGLBlendOp(BlendOp op)
     case BlendOp::Add: return GL_FUNC_ADD;
     case BlendOp::Subtract: return GL_FUNC_SUBTRACT;
     case BlendOp::ReverseSubtract: return GL_FUNC_REVERSE_SUBTRACT;
+    case BlendOp::Max: return GL_MAX;
     default: return GL_FUNC_ADD;
     }
 }

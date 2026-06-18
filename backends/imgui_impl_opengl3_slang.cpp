@@ -141,6 +141,10 @@ struct ImGui_ImplOpenGL3Slang_Data
     GLuint          AttribLocationVtxColor;
     unsigned int    VboHandle, ElementsHandle;
     GLuint          EffectParamsUbo;         // std140 scratch buffer for per-draw effect uniforms (binding 2)
+    GLuint          EffectStorageSsbo;       // scratch SSBO for per-draw storage buffers (binding 3+)
+    GLsizeiptr      EffectStorageSsboSize;
+    GLuint          EffectStorageSsbo2;
+    GLsizeiptr      EffectStorageSsbo2Size;
     GLsizeiptr      VertexBufferSize;
     GLsizeiptr      IndexBufferSize;
     bool            HasPolygonMode;
@@ -167,7 +171,37 @@ struct ShaderProgramState
 };
 static std::unordered_map<std::string, ShaderProgramState> g_ShaderPrograms;
 static ImGui_ImplOpenGL3Slang_Stats g_LastStats;
+static ImGui_ImplOpenGL3Slang_ShouldSkipDefaultDrawFn g_SkipDefaultDrawFn = nullptr;
+struct EffectCaptureSkipRange
+{
+    const ImDrawList* drawList = nullptr;
+    int idxStart = 0;
+    int idxEnd = 0;
+};
+static std::vector<EffectCaptureSkipRange> g_EffectCaptureSkips;
 static std::string g_LastErrorText;
+
+static bool ShouldSkipDefaultDrawForCmd(const ImDrawList* drawList, const ImDrawCmd* cmd)
+{
+    if (!drawList || !cmd || cmd->UserCallback != nullptr || cmd->ElemCount == 0)
+        return false;
+
+    const int cmdIdxStart = static_cast<int>(cmd->IdxOffset);
+    const int cmdIdxEnd = static_cast<int>(cmd->IdxOffset + cmd->ElemCount);
+    for (const EffectCaptureSkipRange& range : g_EffectCaptureSkips)
+    {
+        if (range.drawList != drawList)
+            continue;
+        const int overlapStart = (range.idxStart > cmdIdxStart) ? range.idxStart : cmdIdxStart;
+        const int overlapEnd = (range.idxEnd < cmdIdxEnd) ? range.idxEnd : cmdIdxEnd;
+        if (overlapEnd > overlapStart)
+            return true;
+    }
+
+    if (g_SkipDefaultDrawFn)
+        return g_SkipDefaultDrawFn(drawList, cmd);
+    return false;
+}
 
 // Backend data stored in io.BackendRendererUserData to allow support for multiple Dear ImGui contexts
 static ImGui_ImplOpenGL3Slang_Data* ImGui_ImplOpenGL3Slang_GetBackendData()
@@ -556,11 +590,16 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
     bd->FrameCommands->Clear();
     for (const ImGuiRenderCore::UniformBlockUpdate& u : pendingUniforms)
         bd->FrameCommands->PushUniformUpdate(u);
+    // Effect capture skips are registered in SubmitQueuedEffects() before this call.
     for (const ImDrawList* draw_list : draw_data->CmdLists)
     {
         for (int cmd_i = 0; cmd_i < draw_list->CmdBuffer.Size; cmd_i++)
         {
             const ImDrawCmd* pcmd = &draw_list->CmdBuffer[cmd_i];
+            if (pcmd->UserCallback != nullptr || pcmd->ElemCount == 0)
+                continue;
+            if (ShouldSkipDefaultDrawForCmd(draw_list, pcmd))
+                continue;
             ImGuiRenderCore::DrawPacket packet;
             packet.pipelineKey = "imgui_default";
             packet.texture = pcmd->GetTexID();
@@ -645,6 +684,68 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
                         GL_CALL(glBindBuffer(GL_UNIFORM_BUFFER, bd->EffectParamsUbo));
                         GL_CALL(glBufferSubData(GL_UNIFORM_BUFFER, 0, ubo_sz, packet.effectUniformBytes.data()));
                         glBindBufferBase(GL_UNIFORM_BUFFER, (GLuint)packet.effectUniformBinding, bd->EffectParamsUbo);
+                    }
+                    if (packet.storageBufferBinding != 0)
+                    {
+                        const void* ssbo_data = nullptr;
+                        GLsizeiptr ssbo_sz = 0;
+                        if (packet.storageBufferData != nullptr && packet.storageBufferDataSize > 0)
+                        {
+                            ssbo_data = packet.storageBufferData;
+                            ssbo_sz = (GLsizeiptr)packet.storageBufferDataSize;
+                        }
+                        else if (!packet.storageBufferBytes.empty())
+                        {
+                            ssbo_data = packet.storageBufferBytes.data();
+                            ssbo_sz = (GLsizeiptr)packet.storageBufferBytes.size();
+                        }
+                        if (ssbo_data != nullptr && ssbo_sz > 0)
+                        {
+                            if (bd->EffectStorageSsbo == 0)
+                            {
+                                glGenBuffers(1, &bd->EffectStorageSsbo);
+                                bd->EffectStorageSsboSize = 0;
+                            }
+                            GL_CALL(glBindBuffer(GL_SHADER_STORAGE_BUFFER, bd->EffectStorageSsbo));
+                            if (ssbo_sz > bd->EffectStorageSsboSize)
+                            {
+                                GL_CALL(glBufferData(GL_SHADER_STORAGE_BUFFER, ssbo_sz, nullptr, GL_DYNAMIC_DRAW));
+                                bd->EffectStorageSsboSize = ssbo_sz;
+                            }
+                            GL_CALL(glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, ssbo_sz, ssbo_data));
+                            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, (GLuint)packet.storageBufferBinding, bd->EffectStorageSsbo);
+                        }
+                    }
+                    if (packet.storageBufferBinding2 != 0)
+                    {
+                        const void* ssbo_data = nullptr;
+                        GLsizeiptr ssbo_sz = 0;
+                        if (packet.storageBufferData2 != nullptr && packet.storageBufferData2Size > 0)
+                        {
+                            ssbo_data = packet.storageBufferData2;
+                            ssbo_sz = (GLsizeiptr)packet.storageBufferData2Size;
+                        }
+                        else if (!packet.storageBufferBytes2.empty())
+                        {
+                            ssbo_data = packet.storageBufferBytes2.data();
+                            ssbo_sz = (GLsizeiptr)packet.storageBufferBytes2.size();
+                        }
+                        if (ssbo_data != nullptr && ssbo_sz > 0)
+                        {
+                            if (bd->EffectStorageSsbo2 == 0)
+                            {
+                                glGenBuffers(1, &bd->EffectStorageSsbo2);
+                                bd->EffectStorageSsbo2Size = 0;
+                            }
+                            GL_CALL(glBindBuffer(GL_SHADER_STORAGE_BUFFER, bd->EffectStorageSsbo2));
+                            if (ssbo_sz > bd->EffectStorageSsbo2Size)
+                            {
+                                GL_CALL(glBufferData(GL_SHADER_STORAGE_BUFFER, ssbo_sz, nullptr, GL_DYNAMIC_DRAW));
+                                bd->EffectStorageSsbo2Size = ssbo_sz;
+                            }
+                            GL_CALL(glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, ssbo_sz, ssbo_data));
+                            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, (GLuint)packet.storageBufferBinding2, bd->EffectStorageSsbo2);
+                        }
                     }
                 }
             }
@@ -1185,6 +1286,8 @@ void    ImGui_ImplOpenGL3Slang_DestroyDeviceObjects()
     if (bd->ElementsHandle) { glDeleteBuffers(1, &bd->ElementsHandle); bd->ElementsHandle = 0; }
     if (bd->UboHandle)      { glDeleteBuffers(1, &bd->UboHandle); bd->UboHandle = 0; }
     if (bd->EffectParamsUbo) { glDeleteBuffers(1, &bd->EffectParamsUbo); bd->EffectParamsUbo = 0; }
+    if (bd->EffectStorageSsbo) { glDeleteBuffers(1, &bd->EffectStorageSsbo); bd->EffectStorageSsbo = 0; }
+    if (bd->EffectStorageSsbo2) { glDeleteBuffers(1, &bd->EffectStorageSsbo2); bd->EffectStorageSsbo2 = 0; }
     for (auto& it : g_ShaderPrograms)
     {
         if (it.second.program != 0 && it.second.program != bd->ShaderHandle)
@@ -1310,6 +1413,23 @@ void ImGui_ImplOpenGL3Slang_SetGlobalUniformBlock(const char* blockName, uint32_
     update.bytes.resize(bytes);
     memcpy(update.bytes.data(), data, bytes);
     bd->FrameCommands->PushUniformUpdate(update);
+}
+
+void ImGui_ImplOpenGL3Slang_SetDefaultDrawSkipFn(ImGui_ImplOpenGL3Slang_ShouldSkipDefaultDrawFn fn)
+{
+    g_SkipDefaultDrawFn = fn;
+}
+
+void ImGui_ImplOpenGL3Slang_ClearEffectCaptureSkips()
+{
+    g_EffectCaptureSkips.clear();
+}
+
+void ImGui_ImplOpenGL3Slang_PushEffectCaptureSkip(const ImDrawList* drawList, int idxStart, int idxEnd)
+{
+    if (!drawList || idxEnd <= idxStart)
+        return;
+    g_EffectCaptureSkips.push_back({drawList, idxStart, idxEnd});
 }
 
 ImGui_ImplOpenGL3Slang_Stats ImGui_ImplOpenGL3Slang_GetStats()
