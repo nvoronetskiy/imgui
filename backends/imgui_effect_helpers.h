@@ -162,6 +162,9 @@ public:
 
     void EnqueueCustomDraw(EffectHandle handle, const ImGuiRenderCore::DrawPacket& packet);
 
+    /// Skip default ImGui draws for [idxStart, idxEnd) on this draw list during the next SubmitQueuedEffects().
+    void QueueDrawListIndexSkip(const ImDrawList* drawList, int idxStart, int idxEnd);
+
     /// Call once at the beginning of each application frame (e.g. top of the main loop).
     void AdvanceFrame();
 
@@ -228,6 +231,13 @@ private:
         FontEffectPolicy fontPolicy = FontEffectPolicy::SkipFontAtlas;
     };
 
+    struct IndexSkipRange
+    {
+        const ImDrawList* drawList = nullptr;
+        int idxStart = 0;
+        int idxEnd = 0;
+    };
+
     static bool        ReadTextFile(const std::string& path, std::string& outText);
     static bool        LoadShaderFileIntoDesc(EffectCreateDesc& ioDesc, std::string* errorText);
     static const char* BlendKey(BuiltinBlendMode mode);
@@ -252,6 +262,7 @@ private:
     std::vector<OpenCapture> m_openCaptures;
     std::vector<OpenCapture> m_queuedCaptures;
     std::vector<std::pair<EffectHandle, ImGuiRenderCore::DrawPacket>> m_explicitPackets;
+    std::vector<IndexSkipRange> m_pendingIndexSkips;
     EffectDebugStats m_lastStats{};
     bool             m_debugDrawCaptureClips = false;
 
