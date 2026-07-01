@@ -108,6 +108,7 @@ if(IMGUI_BUILD_OPENGL3_SLANG_BINDING)
             ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_shader_manager_slang.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_gl_adapter.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_render_core.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_effect_helpers.cpp
     )
 endif()
 
@@ -279,6 +280,7 @@ if(NOT IMGUI_SKIP_HEADERS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_shader_manager_slang.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_gl_adapter.h
                 ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_render_core.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/backends/imgui_effect_helpers.h
             DESTINATION
                 include
         )
