@@ -690,7 +690,15 @@ void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, unsigned int
             if (tex->Status != ImTextureStatus_OK)
                 ImGui_ImplOpenGL3_UpdateTexture(tex);
 
-    ImGui_ImplOpenGL3_SetupRenderState(draw_data, fb_width, fb_height, vertex_array_object);
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    ImGui_ImplOpenGL3_RenderState render_state;
+    render_state.UseBindSampler = bd->HasBindSampler;
+    render_state.UseTexParameterFilter = false;
+    render_state.CurrentSampler = 0;
+    render_state.CurrentTexParameterFilter = 0;
+    platform_io.Renderer_RenderState = &render_state;
+
+    ImGui_ImplOpenGL3_SetupRenderState(draw_data, &render_state, fb_width, fb_height, vertex_array_object);
 
     // Will project scissor/clipping rectangles into framebuffer space
     ImVec2 clip_off = draw_data->DisplayPos;         // (0,0) unless using multi-viewports
@@ -737,7 +745,7 @@ void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, unsigned int
             {
                 // User callback, registered via ImDrawList::AddCallback()
                 if (pcmd->UserCallback == ImGui_ImplOpenGL3_DrawCallback_ResetRenderState)
-                    ImGui_ImplOpenGL3_SetupRenderState(draw_data, fb_width, fb_height, vertex_array_object);
+                    ImGui_ImplOpenGL3_SetupRenderState(draw_data, &render_state, fb_width, fb_height, vertex_array_object);
                 else
                     pcmd->UserCallback(draw_list, pcmd);
             }
@@ -771,6 +779,7 @@ void    ImGui_ImplOpenGL3_RenderDrawData_Opt(ImDrawData* draw_data, unsigned int
             }
         }
     }
+    platform_io.Renderer_RenderState = nullptr;
 }
 
 static void ImGui_ImplOpenGL3_DestroyTexture(ImTextureData* tex)
