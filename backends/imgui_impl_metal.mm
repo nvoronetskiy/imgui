@@ -18,6 +18,7 @@
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
 //  2026-XX-XX: Metal: Added support for multiple windows via the ImGuiPlatformIO interface.
+//  2026-08-06: Metal: fixed resizing windows losing framebuffer scale. (#6828, #8856)
 //  2026-04-28: Added support for standard draw callbacks (in platform_io): DrawCallback_SetSamplerLinear and DrawCallback_SetSamplerNearest. (#9378, #9381)
 //  2026-04-23: Added support for standard draw callbacks (in platform_io): DrawCallback_ResetRenderState (others are not yet supported). (#9378)
 //  2026-04-14: Metal: use a dedicated bufferCacheLock to avoid crashing when bufferCache is replaced by a new object while being used for @synchronize(). (#9367)
@@ -131,7 +132,6 @@ void ImGui_ImplMetal_RenderDrawData(ImDrawData* draw_data,
     ImGui_ImplMetal_RenderDrawData(draw_data,
                                    (__bridge id<MTLCommandBuffer>)(commandBuffer),
                                    (__bridge id<MTLRenderCommandEncoder>)(commandEncoder));
-
 }
 
 bool ImGui_ImplMetal_CreateDeviceObjects(MTL::Device* device)
@@ -542,7 +542,15 @@ inline static CGSize MakeScaledSize(CGSize size, CGFloat scale)
 static void ImGui_ImplMetal_SetWindowSize(ImGuiViewport* viewport, ImVec2 size)
 {
     ImGuiViewportDataMetal* data = (ImGuiViewportDataMetal*)viewport->RendererUserData;
-    data->MetalLayer.drawableSize = MakeScaledSize(CGSizeMake(size.x, size.y), viewport->DpiScale);
+#if 0 && TARGET_OS_OSX
+    void* handle = viewport->PlatformHandleRaw ? viewport->PlatformHandleRaw : viewport->PlatformHandle;
+    NSWindow* window = (__bridge NSWindow*)handle;
+    CGFloat scale = window.backingScaleFactor;
+    data->MetalLayer.contentsScale = scale;
+    data->MetalLayer.drawableSize = MakeScaledSize(CGSizeMake(size.x, size.y), scale);
+#else
+    data->MetalLayer.drawableSize = MakeScaledSize(CGSizeMake(size.x, size.y), data->MetalLayer.contentsScale);
+#endif
 }
 
 static void ImGui_ImplMetal_RenderWindow(ImGuiViewport* viewport, void*)
@@ -562,12 +570,12 @@ static void ImGui_ImplMetal_RenderWindow(ImGuiViewport* viewport, void*)
     }
     data->FirstFrame = false;
 
-    float fb_scale = (float)window.backingScaleFactor;
-    if (data->MetalLayer.contentsScale != fb_scale)
-    {
-        data->MetalLayer.contentsScale = fb_scale;
-        data->MetalLayer.drawableSize = MakeScaledSize(window.frame.size, fb_scale);
-    }
+    // The layer is installed on the window's contentView; window.frame additionally includes the title bar.
+    CGFloat fb_scale = window.backingScaleFactor;
+    data->MetalLayer.contentsScale = fb_scale;
+    CGSize want_size = MakeScaledSize(window.contentView.bounds.size, fb_scale);
+    if (!CGSizeEqualToSize(data->MetalLayer.drawableSize, want_size))
+        data->MetalLayer.drawableSize = want_size;
 #endif
 
     id <CAMetalDrawable> drawable = [data->MetalLayer nextDrawable];
@@ -744,7 +752,7 @@ static void ImGui_ImplMetal_InvalidateDeviceObjectsForPlatformWindows()
     return [[MetalBuffer alloc] initWithBuffer:backing];
 }
 
-// Bilinear sampling is required by default. Set 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines' or 'style.AntiAliasedLinesUseTex = false' to allow point/nearest sampling.
+// Bilinear sampling is required.
 - (id<MTLRenderPipelineState>)renderPipelineStateForFramebufferDescriptor:(FramebufferDescriptor*)descriptor device:(id<MTLDevice>)device
 {
     NSError* error = nil;

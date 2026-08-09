@@ -1,4 +1,4 @@
-// dear imgui, v1.92.9 WIP
+// dear imgui, v1.93.0 WIP
 // (tables and columns code)
 
 /*
@@ -428,11 +428,8 @@ bool    ImGui::BeginTableEx(const char* name, ImGuiID id, int columns_count, ImG
                 SetNextWindowScroll(ImVec2(0.0f, 0.0f));
 
         // Create scrolling region (without border and zero window padding)
-        ImGuiChildFlags child_child_flags = (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasChildFlags) ? g.NextWindowData.ChildFlags : ImGuiChildFlags_None;
-        ImGuiWindowFlags child_window_flags = (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasWindowFlags) ? g.NextWindowData.WindowFlags : ImGuiWindowFlags_None;
-        if (flags & ImGuiTableFlags_ScrollX)
-            child_window_flags |= ImGuiWindowFlags_HorizontalScrollbar;
-        BeginChildEx(name, instance_id, outer_rect.GetSize(), child_child_flags, child_window_flags);
+        ImGuiWindowFlags child_window_flags = (flags & ImGuiTableFlags_ScrollX) ? ImGuiWindowFlags_HorizontalScrollbar : ImGuiWindowFlags_None;
+        BeginChildEx(name, instance_id, outer_rect.GetSize(), ImGuiChildFlags_None, child_window_flags);
         table->InnerWindow = g.CurrentWindow;
         table->WorkRect = table->InnerWindow->WorkRect;
         table->OuterRect = table->InnerWindow->Rect();
@@ -490,17 +487,18 @@ bool    ImGui::BeginTableEx(const char* name, ImGuiID id, int columns_count, ImG
         // FIXME: Because inner_window's Scrollbar doesn't know about border size, since it's not encoded in window->WindowBorderSize,
         // it already overlaps it and doesn't need an extra offset. Ideally we should be able to pass custom border size with
         // different x/y values to BeginChild().
+        const float border_size = TABLE_BORDER_SIZE;
         if (flags & ImGuiTableFlags_BordersOuterV)
         {
-            table->HostClipRect.Min.x = ImMin(table->HostClipRect.Min.x + TABLE_BORDER_SIZE, table->HostClipRect.Max.x);
+            table->HostClipRect.Min.x = ImMin(table->HostClipRect.Min.x + border_size, table->HostClipRect.Max.x);
             if (inner_window->DecoOuterSizeX2 == 0.0f)
-                table->HostClipRect.Max.x = ImMax(table->HostClipRect.Max.x - TABLE_BORDER_SIZE, table->HostClipRect.Min.x);
+                table->HostClipRect.Max.x = ImMax(table->HostClipRect.Max.x - border_size, table->HostClipRect.Min.x);
         }
         if (flags & ImGuiTableFlags_BordersOuterH)
         {
-            table->HostClipRect.Min.y = ImMin(table->HostClipRect.Min.y + TABLE_BORDER_SIZE, table->HostClipRect.Max.y);
+            table->HostClipRect.Min.y = ImMin(table->HostClipRect.Min.y + border_size, table->HostClipRect.Max.y);
             if (inner_window->DecoOuterSizeY2 == 0.0f)
-                table->HostClipRect.Max.y = ImMax(table->HostClipRect.Max.y - TABLE_BORDER_SIZE, table->HostClipRect.Min.y);
+                table->HostClipRect.Max.y = ImMax(table->HostClipRect.Max.y - border_size, table->HostClipRect.Min.y);
         }
     }
 
@@ -3045,7 +3043,7 @@ void ImGui::TableDrawBorders(ImGuiTable* table)
         else if (table->Flags & ImGuiTableFlags_BordersOuterH)
         {
             inner_drawlist->AddLineH(outer_border.Min.x, outer_border.Max.x, outer_border.Min.y, outer_col, border_size);
-            inner_drawlist->AddLineH(outer_border.Min.x, outer_border.Max.x, outer_border.Max.y, outer_col, border_size);
+            inner_drawlist->AddLineH(outer_border.Min.x, outer_border.Max.x, outer_border.Max.y - border_size, outer_col, border_size);
         }
     }
     if ((table->Flags & ImGuiTableFlags_BordersInnerH) && table->RowPosY2 < table->OuterRect.Max.y)
@@ -3659,7 +3657,7 @@ void ImGui::TableAngledHeadersRowEx(ImGuiID row_id, float angle, float max_label
             if (pass == 1)
             {
                 // Draw border
-                draw_list->AddLine(bg_shape[0], bg_shape[3], TableGetColumnBorderCol(table, order_n, column_n));
+                draw_list->AddLine(bg_shape[0] - ImVec2(TABLE_BORDER_SIZE * 0.5f, 0.0f), bg_shape[3] - ImVec2(TABLE_BORDER_SIZE * 0.5f, 0.0f), TableGetColumnBorderCol(table, order_n, column_n), TABLE_BORDER_SIZE);
             }
         }
     PopClipRect();
@@ -3908,8 +3906,15 @@ static size_t TableSettingsCalcChunkSize(int columns_count)
 ImGuiTableSettings* ImGui::TableSettingsCreate(ImGuiID id, int columns_count)
 {
     ImGuiContext& g = *GImGui;
-    //ImGuiTableSettings* old_settings = TableSettingsFindByID(id); // Comment out sanity check to avoid unnecessary lookups.
-    //IM_ASSERT(old_settings == NULL || old_settings->ColumnsCountMax < columns_count);
+    if (ImGuiTableSettings* settings = TableSettingsFindByID(id))
+    {
+        if (settings->ColumnsCountMax >= columns_count)
+        {
+            TableSettingsInit(settings, id, columns_count, settings->ColumnsCountMax); // Recycle
+            return settings;
+        }
+        settings->ID = 0; // Invalidate storage, we won't fit because of a count change
+    }
     ImGuiTableSettings* settings = g.SettingsTables.alloc_chunk(TableSettingsCalcChunkSize(columns_count));
     TableSettingsInit(settings, id, columns_count, columns_count);
     return settings;
@@ -4167,9 +4172,12 @@ static void TableSettingsHandler_Cleanup(ImGuiContext* ctx, ImGuiSettingsHandler
             table->SettingsOffset = -1;
     for (ImGuiTableSettings* settings = g.SettingsTables.begin(); settings != NULL; settings = g.SettingsTables.next_chunk(settings))
     {
+        const bool is_valid = settings->LastUsedDate.IsValid();
         if (args->_DiscardOlderThanDate != 0 && settings->LastUsedDate.Unpack() < args->_DiscardOlderThanDate)
             settings->ID = 0;
-        if (args->SetCurrentSessionDateToAll || (args->SetCurrentSessionDateWhenMissingDate && settings->LastUsedDate.IsValid() == false))
+        else if (args->DiscardWhenMissingDate && !is_valid)
+            settings->ID = 0;
+        else if (args->SetCurrentSessionDateToAll || (args->SetCurrentSessionDateWhenMissingDate && !is_valid))
             settings->LastUsedDate = g.SessionDate;
     }
 }
@@ -4188,20 +4196,13 @@ static void TableSettingsHandler_ApplyAll(ImGuiContext* ctx, ImGuiSettingsHandle
 
 static void* TableSettingsHandler_ReadOpen(ImGuiContext*, ImGuiSettingsHandler*, const char* name)
 {
+    // FIXME: As topology changes are allowed, strictly speaking a >= IMGUI_TABLE_MAX_COLUMNS tables stored in .ini file
+    // that was emitted with a higher max count could still be meaningful in some unlikely cases.
+    // We might want to use another MAX defined as (1<<(sizeof(ImGuiTableColumnIdx)*8-1))-1.
     ImGuiID id = 0;
     int columns_count = 0;
-    if (sscanf(name, "0x%08X,%d", &id, &columns_count) < 2)
+    if (sscanf(name, "0x%08X,%d", &id, &columns_count) < 2 || columns_count <= 0 || columns_count >= IMGUI_TABLE_MAX_COLUMNS)
         return NULL;
-
-    if (ImGuiTableSettings* settings = ImGui::TableSettingsFindByID(id))
-    {
-        if (settings->ColumnsCountMax >= columns_count)
-        {
-            TableSettingsInit(settings, id, columns_count, settings->ColumnsCountMax); // Recycle
-            return settings;
-        }
-        settings->ID = 0; // Invalidate storage, we won't fit because of a count change
-    }
     return ImGui::TableSettingsCreate(id, columns_count);
 }
 
