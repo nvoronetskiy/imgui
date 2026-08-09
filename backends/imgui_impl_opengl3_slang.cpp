@@ -630,8 +630,8 @@ void    ImGui_ImplOpenGL3Slang_RenderDrawData(ImDrawData* draw_data)
     // Keep packets from other viewports for subsequent RenderDrawData() calls.
     const ImGuiID currentViewportId = draw_data->OwnerViewport ? draw_data->OwnerViewport->ID : 0;
     std::unordered_set<const ImDrawList*> drawListsInThisViewport;
-    drawListsInThisViewport.reserve((size_t)draw_data->CmdListsCount);
-    for (int n = 0; n < draw_data->CmdListsCount; ++n)
+    drawListsInThisViewport.reserve((size_t)draw_data->CmdLists.Size);
+    for (int n = 0; n < draw_data->CmdLists.Size; ++n)
         drawListsInThisViewport.insert(draw_data->CmdLists[n]);
 
     for (ImGuiRenderCore::CustomPassData& pass : bd->CustomPasses->ConsumePasses())
