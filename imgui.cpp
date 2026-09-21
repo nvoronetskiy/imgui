@@ -85,6 +85,7 @@ CODE
 // [SECTION] ERROR CHECKING, STATE RECOVERY
 // [SECTION] ITEM SUBMISSION
 // [SECTION] LAYOUT
+// [SECTION] STACK LAYOUT
 // [SECTION] SCROLLING
 // [SECTION] TOOLTIPS
 // [SECTION] POPUPS
@@ -1449,7 +1450,7 @@ static void             NavSaveLastChildNavWindowIntoParent(ImGuiWindow* nav_win
 static ImGuiWindow*     NavRestoreLastChildNavWindow(ImGuiWindow* window);
 static void             NavRestoreLayer(ImGuiNavLayer layer);
 
-// Stack Layout (BeginHorizontal / BeginVertical / Spring)
+// Stack Layout
 static ImGuiLayout*     FindLayout(ImGuiID id, ImGuiLayoutType type);
 static ImGuiLayout*     CreateNewLayout(ImGuiID id, ImGuiLayoutType type, ImVec2 size);
 static void             BeginLayout(ImGuiID id, ImGuiLayoutType type, ImVec2 size, float align);
@@ -1460,6 +1461,10 @@ static void             BalanceLayoutSprings(ImGuiLayout& layout);
 static ImVec2           BalanceLayoutItemAlignment(ImGuiLayout& layout, ImGuiLayoutItem& item);
 static void             BalanceLayoutItemsAlignment(ImGuiLayout& layout);
 static void             BalanceChildLayouts(ImGuiLayout& layout);
+static void             BeginLayoutClipRect(ImGuiLayout& layout);
+static void             EndLayoutClipRect(ImGuiLayout& layout);
+static void             ApplyLayoutClipRect(ImGuiLayout& layout);
+static void             MergeLayoutSplitters(ImGuiLayout& layout);
 static ImVec2           CalculateLayoutSize(ImGuiLayout& layout, bool collapse_springs);
 static ImGuiLayoutItem* GenerateLayoutItem(ImGuiLayout& layout, ImGuiLayoutItemType type);
 static float            CalculateLayoutItemAlignmentOffset(ImGuiLayout& layout, ImGuiLayoutItem& item);
@@ -1595,6 +1600,7 @@ ImGuiStyle::ImGuiStyle()
     ScrollbarPadding            = 2.0f;             // Padding of scrollbar grab within its frame (same for both axes)
     GrabMinSize                 = 12.0f;            // Minimum width/height of a grab box for slider/scrollbar
     GrabRounding                = 0.0f;             // Radius of grabs corners rounding. Set to 0.0f to have rectangular slider grabs.
+    LayoutAlign                 = 0.5f;             // Element alignment inside horizontal and vertical layouts (0.0f - left/top, 1.0f - right/bottom, 0.5f - center).
     LogSliderDeadzone           = 4.0f;             // The size in pixels of the dead-zone around zero on logarithmic sliders that cross zero.
     ImageRounding               = 0.0f;             // Rounding of Image() calls.
     ImageBorderSize             = 0.0f;             // Thickness of border around Image() calls.
@@ -4850,6 +4856,12 @@ ImGuiWindow::~ImGuiWindow()
     IM_ASSERT(DrawList == &DrawListInst);
     IM_DELETE(Name);
     ColumnsStorage.clear_destruct();
+
+    for (int i = 0; i < DC.Layouts.Data.Size; i++)
+    {
+        ImGuiLayout* layout = (ImGuiLayout*)DC.Layouts.Data[i].val_p;
+        IM_DELETE(layout);
+    }
 }
 
 static void SetCurrentWindow(ImGuiWindow* window)
@@ -8820,6 +8832,13 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
         window->DC.WindowItemStatusFlags |= IsMouseHoveringRect(title_bar_rect.Min, title_bar_rect.Max, false) ? ImGuiItemStatusFlags_HoveredRect : 0;
         SetLastItemDataForWindow(window, title_bar_rect);
 
+        // Mark all layouts as dead. They may be revived in this frame.
+        for (int i = 0; i < window->DC.Layouts.Data.Size; i++)
+        {
+            ImGuiLayout* layout = (ImGuiLayout*)window->DC.Layouts.Data[i].val_p;
+            layout->Live = false;
+        }
+
         // [DEBUG]
 #ifndef IMGUI_DISABLE_DEBUG_TOOLS
         if (g.DebugLocateId != 0 && (window->ID == g.DebugLocateId || window->MoveId == g.DebugLocateId))
@@ -12025,6 +12044,19 @@ void    ImGui::ErrorRecoveryTryToRecoverWindowState(const ImGuiErrorRecoveryStat
         IM_ASSERT_USER_ERROR(0, "Missing EndMultiSelect()");
         EndMultiSelect();
     }
+    while (window->DC.LayoutStack.Size > 0) //-V1044
+    {
+        if (window->DC.LayoutStack.back()->Type == ImGuiLayoutType_Horizontal)
+        {
+            IM_ASSERT_USER_ERROR(0, "Missing EndHorizontal()");
+            EndHorizontal();
+        }
+        else
+        {
+            IM_ASSERT_USER_ERROR(0, "Missing EndVertical()");
+            EndVertical();
+        }
+    }
     if (window->DC.MenuBarAppending) //-V1044
     {
         IM_ASSERT_USER_ERROR(0, "Missing EndMenuBar()");
@@ -12181,13 +12213,6 @@ void ImGui::ErrorCheckEndFrameFinalizeErrorTooltip()
         Text(")");
         EndErrorTooltip();
     }
-
-    // Window stacks
-    // NOT checking: DC.ItemWidth, DC.TextWrapPos (per window) to allow user to conveniently push once and not pop (they are cleared on Begin)
-    // IM_ASSERT(SizeOfIDStack         == window->IDStack.Size     && "PushID/PopID or TreeNode/TreePop Mismatch!");
-    // IM_ASSERT(0                     == window->DC.LayoutStack.Size && (!window->DC.LayoutStack.Size || window->DC.LayoutStack.back()->Type == ImGuiLayoutType_Horizontal) && "BeginHorizontal/EndHorizontal Mismatch!");
-    // IM_ASSERT(0                     == window->DC.LayoutStack.Size && (!window->DC.LayoutStack.Size || window->DC.LayoutStack.back()->Type == ImGuiLayoutType_Vertical)   && "BeginVertical/EndVertical Mismatch!");
-    
 #endif
 }
 
@@ -12289,6 +12314,9 @@ bool ImGui::ItemAdd(const ImRect& bb, ImGuiID id, const ImRect* nav_bb_arg, ImGu
     g.NextItemData.HasFlags = ImGuiNextItemDataFlags_None;
     g.NextItemData.ItemFlagsSet = ImGuiItemFlags_None;
 
+    if (window->DC.CurrentLayoutItem)
+        window->DC.CurrentLayoutItem->MeasuredBounds.Max = ImMax(window->DC.CurrentLayoutItem->MeasuredBounds.Max, bb.Max);
+
 #ifdef IMGUI_ENABLE_TEST_ENGINE
     if (id != 0)
         IMGUI_TEST_ENGINE_ITEM_ADD(id, g.LastItemData.NavRect, &g.LastItemData);
@@ -12388,6 +12416,36 @@ void ImGui::ItemSize(const ImVec2& size, float text_baseline_y)
     if (window->SkipItems)
         return;
 
+    ImGuiLayoutType layout_type = window->DC.LayoutType;
+    if (window->DC.CurrentLayout)
+        layout_type = window->DC.CurrentLayout->Type;
+
+    //if (g.IO.KeyAlt) window->DrawList->AddCircle(window->DC.CursorPos, 3.0f, IM_COL32(255,255,0,255), 4); // [DEBUG] Widget position
+
+    // Stack Layouts: Handle horizontal case first to simplify merge in case code handling vertical changes.
+    if (layout_type == ImGuiLayoutType_Horizontal)
+    {
+        const float line_width = ImMax(window->DC.CurrLineSize.x, size.x);
+
+        // Always align ourselves on pixel boundaries
+        //if (g.IO.KeyAlt) window->DrawList->AddRect(window->DC.CursorPos, window->DC.CursorPos + ImVec2(size.x, line_height), IM_COL32(255,0,0,200)); // [DEBUG]
+        window->DC.CursorPosPrevLine.x = window->DC.CursorPos.x;
+        window->DC.CursorPosPrevLine.y = window->DC.CursorPos.y + size.y;
+        window->DC.CursorPos.x = IM_TRUNC(window->DC.CursorPos.x + line_width + g.Style.ItemSpacing.x);
+        window->DC.CursorPos.y = IM_TRUNC(window->DC.CursorPosPrevLine.y - size.y);
+        window->DC.CursorMaxPos.x = ImMax(window->DC.CursorMaxPos.x, window->DC.CursorPos.x - g.Style.ItemSpacing.x);
+        window->DC.CursorMaxPos.y = ImMax(window->DC.CursorMaxPos.y, window->DC.CursorPosPrevLine.y);
+        //if (g.IO.KeyAlt) window->DrawList->AddCircle(window->DC.CursorMaxPos, 3.0f, IM_COL32(255,0,0,255), 4); // [DEBUG]
+
+        window->DC.PrevLineSize.x = line_width;
+        window->DC.PrevLineSize.y = 0.0f;
+        window->DC.CurrLineSize.x = 0.0f;
+        window->DC.PrevLineTextBaseOffset = ImMax(window->DC.CurrLineTextBaseOffset, text_baseline_y);
+        window->DC.CurrLineTextBaseOffset = window->DC.PrevLineTextBaseOffset;
+        window->DC.IsSameLine = window->DC.IsSetPos = false;
+        return;
+    }
+
     // We increase the height in this function to accommodate for baseline offset.
     // In theory we should be offsetting the starting position (window->DC.CursorPos), that will be the topic of a larger refactor,
     // but since ItemSize() is not yet an API that moves the cursor (to handle e.g. wrapping) enlarging the height has the same effect.
@@ -12406,15 +12464,12 @@ void ImGui::ItemSize(const ImVec2& size, float text_baseline_y)
     window->DC.CursorMaxPos.y = ImMax(window->DC.CursorMaxPos.y, window->DC.CursorPos.y - g.Style.ItemSpacing.y);
     //if (g.IO.KeyAlt) window->DrawList->AddCircle(window->DC.CursorMaxPos, 3.0f, IM_COL32(255,0,0,255), 4); // [DEBUG]
 
+    window->DC.PrevLineSize.x = 0.0f;
     window->DC.PrevLineSize.y = line_height;
     window->DC.CurrLineSize.y = 0.0f;
     window->DC.PrevLineTextBaseOffset = ImMax(window->DC.CurrLineTextBaseOffset, text_baseline_y);
     window->DC.CurrLineTextBaseOffset = 0.0f;
     window->DC.IsSameLine = window->DC.IsSetPos = false;
-
-    // Horizontal layout mode
-    if (window->DC.LayoutType == ImGuiLayoutType_Horizontal)
-        SameLine();
 }
 IM_MSVC_RUNTIME_CHECKS_RESTORE
 
@@ -12824,6 +12879,8 @@ static void ImGui::BeginLayout(ImGuiID id, ImGuiLayoutType type, ImVec2 size, fl
     if (!layout)
         layout = CreateNewLayout(id, type, size);
 
+    IM_ASSERT(!layout->Live && "BeginHorizontal/BeginVertical with same ID is already live in this frame. Please use PushID() to make ID's unique or rename layout.");
+
     layout->Live = true;
 
     PushLayout(layout);
@@ -12844,6 +12901,8 @@ static void ImGui::BeginLayout(ImGuiID id, ImGuiLayoutType type, ImVec2 size, fl
 
     layout->StartPos = window->DC.CursorPos;
     layout->StartCursorMaxPos = window->DC.CursorMaxPos;
+
+    BeginLayoutClipRect(*layout);
 
     if (type == ImGuiLayoutType_Vertical)
     {
@@ -12922,6 +12981,7 @@ static void ImGui::EndLayout(ImGuiLayoutType type)
     }
 
     layout->CurrentSize = new_size;
+    layout->MeasuredSize = measured_size;
 
     PopID();
 
@@ -12939,6 +12999,8 @@ static void ImGui::EndLayout(ImGuiLayoutType type)
 
     if (layout->Parent == NULL)
         BalanceChildLayouts(*layout);
+
+    EndLayoutClipRect(*layout);
 
     //window->DrawList->AddRect(layout->StartPos, layout->StartPos + measured_size, IM_COL32(0,255,0,255));           // [DEBUG]
     //window->DrawList->AddRect(window->DC.LastItemRect.Min, window->DC.LastItemRect.Max, IM_COL32(255,255,0,255));   // [DEBUG]
@@ -13200,6 +13262,73 @@ static void ImGui::BalanceChildLayouts(ImGuiLayout& layout)
 
     BalanceLayoutSprings(layout);
     BalanceLayoutItemsAlignment(layout);
+}
+
+static void ImGui::BeginLayoutClipRect(ImGuiLayout& layout)
+{
+    ImGuiWindow* window = GetCurrentWindow();
+
+    // Use splitter to collect draw commands in separate channel,
+    // so we can clip them to the layout bounds.
+    layout.Splitter.Split(window->DrawList, 2);
+    layout.Splitter.SetCurrentChannel(window->DrawList, 1);
+
+    // Clip to layout bounds, unrestricted and not measured bounds span
+    // all the way to the edge of the window.
+    ImVec2 clip_rect_min = layout.StartPos;
+    ImVec2 clip_rect_max;
+    clip_rect_max.x = layout.Size.x > 0.0f ? layout.StartPos.x + layout.Size.x : FLT_MAX;
+    clip_rect_max.y = layout.Size.y > 0.0f ? layout.StartPos.y + layout.Size.y : FLT_MAX;
+
+    PushClipRect(clip_rect_min, clip_rect_max, true);
+}
+
+static void ImGui::EndLayoutClipRect(ImGuiLayout& layout)
+{
+    PopClipRect();
+
+    if (layout.Parent != NULL)
+        return;
+
+    ApplyLayoutClipRect(layout);
+
+    MergeLayoutSplitters(layout);
+}
+
+static void ImGui::ApplyLayoutClipRect(ImGuiLayout& layout)
+{
+    for (ImGuiLayout* child = layout.FirstChild; child != NULL; child = child->NextSibling)
+        ApplyLayoutClipRect(*child);
+
+    ImGuiWindow* window = GetCurrentWindow();
+
+    ImVec4 current_clip_rect;
+    current_clip_rect.x = layout.StartPos.x;
+    current_clip_rect.y = layout.StartPos.y;
+    current_clip_rect.z = layout.StartPos.x + layout.MeasuredSize.x;
+    current_clip_rect.w = layout.StartPos.y + layout.MeasuredSize.y;
+
+    layout.Splitter.SetCurrentChannel(window->DrawList, 0);
+    for (ImDrawCmd& cmd : layout.Splitter._Channels[1]._CmdBuffer)
+    {
+
+        if (cmd.ClipRect.x < current_clip_rect.x) cmd.ClipRect.x = current_clip_rect.x;
+        if (cmd.ClipRect.y < current_clip_rect.y) cmd.ClipRect.y = current_clip_rect.y;
+        if (cmd.ClipRect.z > current_clip_rect.z) cmd.ClipRect.z = current_clip_rect.z;
+        if (cmd.ClipRect.w > current_clip_rect.w) cmd.ClipRect.w = current_clip_rect.w;
+    }
+
+    //GetForegroundDrawList()->AddRect(layout.StartPos, layout.StartPos + layout.MeasuredSize, IM_COL32(255,0,0,128)); // [DEBUG]
+}
+
+static void ImGui::MergeLayoutSplitters(ImGuiLayout& layout)
+{
+    for (ImGuiLayout* child = layout.FirstChild; child != NULL; child = child->NextSibling)
+        MergeLayoutSplitters(*child);
+
+    ImGuiWindow* window = GetCurrentWindow();
+
+    layout.Splitter.Merge(window->DrawList);
 }
 
 static ImGuiLayoutItem* ImGui::GenerateLayoutItem(ImGuiLayout& layout, ImGuiLayoutItemType type)
